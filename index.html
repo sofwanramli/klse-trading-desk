@@ -116,7 +116,10 @@ body { padding-block: max(12px, env(safe-area-inset-top, 0px)) max(12px, env(saf
 .td-row:hover { background: var(--td-panel-2); }
 .td-row[aria-selected="true"] { background: var(--td-sel); box-shadow: inset 2px 0 0 var(--td-gold); }
 .td-row:focus-visible { outline: 2px solid var(--td-gold); outline-offset: -2px; }
-.td-row.is-new td:first-child::after { content: "NEW"; margin-left: 6px; font-family: var(--font-anthropic-sans); font-size: 9px; letter-spacing: .08em;
+.td-nm { display: flex; flex-direction: column; line-height: 1.2; }
+.td-nm b { font-family: var(--font-anthropic-sans); font-weight: 600; color: var(--td-fg); }
+.td-nm small { font-family: var(--td-mono); font-size: 10.5px; color: var(--td-muted); }
+.td-row.is-new .td-nm b::after { content: "NEW"; margin-left: 6px; font-family: var(--font-anthropic-sans); font-size: 9px; letter-spacing: .08em; font-weight: 500;
   color: var(--td-bg); background: var(--td-gold); border-radius: 3px; padding: 1px 4px; vertical-align: 1px; }
 .td-empty { padding: var(--cds-pad-md); color: var(--td-muted); font-size: var(--cds-font-size-caption); }
 .td-pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; letter-spacing: .05em; border: 1px solid currentColor; }
@@ -272,24 +275,24 @@ dash.onData(() => {
         <button class="td-tab" role="tab" id="tab-positions" data-tab="positions" aria-selected="false">Trades<span class="ct" id="ct-positions"></span></button>
         <button class="td-tab" role="tab" id="tab-watchlist" data-tab="watchlist" aria-selected="false">Watch<span class="ct" id="ct-watchlist"></span></button>
       </div>
-      <label class="td-search"><span class="muted" aria-hidden="true">⌕</span><input id="q" type="search" placeholder="Find a stock code" aria-label="Find a stock code" autocomplete="off"><kbd>/</kbd></label>
+      <label class="td-search"><span class="muted" aria-hidden="true">⌕</span><input id="q" type="search" placeholder="Find a stock (name or code)" aria-label="Find a stock by name or code" autocomplete="off"><kbd>/</kbd></label>
       <div class="td-list" data-list="signals">
         <table data-source="signals" data-row-key="ticker">
-          <thead><tr><th data-field="ticker"><button>Stock</button></th><th data-field="entry"><button>Buy</button></th><th data-field="stop_pct"><button>Risk %</button></th><th data-field="rr"><button>R:R</button></th></tr></thead>
+          <thead><tr><th data-field="name"><button>Stock</button></th><th data-field="entry"><button>Buy</button></th><th data-field="stop_pct"><button>Risk %</button></th><th data-field="rr"><button>R:R</button></th></tr></thead>
           <tbody></tbody>
         </table>
         <div class="td-empty" hidden>No BUY signals at this close.</div>
       </div>
       <div class="td-list" data-list="positions" hidden>
         <table data-source="positions" data-row-key="ticker,status">
-          <thead><tr><th data-field="ticker"><button>Stock</button></th><th data-field="action"><button>Today</button></th><th data-field="pnl_pct"><button>P/L %</button></th><th data-field="days_held"><button>Day</button></th></tr></thead>
+          <thead><tr><th data-field="name"><button>Stock</button></th><th data-field="action"><button>Today</button></th><th data-field="pnl_pct"><button>P/L %</button></th><th data-field="days_held"><button>Day</button></th></tr></thead>
           <tbody></tbody>
         </table>
         <div class="td-empty" hidden>No open trades.</div>
       </div>
       <div class="td-list" data-list="watchlist" hidden>
         <table data-source="watchlist" data-row-key="ticker">
-          <thead><tr><th data-field="ticker"><button>Stock</button></th><th data-field="stage"><button>Stage</button></th><th data-field="close"><button>Close</button></th><th data-field="rsi14"><button>RSI</button></th></tr></thead>
+          <thead><tr><th data-field="name"><button>Stock</button></th><th data-field="stage"><button>Stage</button></th><th data-field="close"><button>Close</button></th><th data-field="rsi14"><button>RSI</button></th></tr></thead>
           <tbody></tbody>
         </table>
         <div class="td-empty" hidden>Nothing on the watchlist.</div>
@@ -330,7 +333,7 @@ dash.onData(() => {
     </div>
     <div data-lpane="history" class="td-table">
       <table data-source="history" data-row-key="id">
-        <thead><tr><th class="txt" data-field="ticker"><button>Stock</button></th><th class="txt" data-field="kind"><button>Setup</button></th><th data-field="opened"><button>Opened</button></th><th data-field="closed"><button>Closed</button></th><th class="txt" data-field="reason"><button>Exit</button></th><th data-field="return_pct"><button>Return %</button></th></tr></thead>
+        <thead><tr><th class="txt" data-field="name"><button>Stock</button></th><th class="txt" data-field="kind"><button>Setup</button></th><th data-field="opened"><button>Opened</button></th><th data-field="closed"><button>Closed</button></th><th class="txt" data-field="reason"><button>Exit</button></th><th data-field="return_pct"><button>Return %</button></th></tr></thead>
         <tbody></tbody>
       </table>
       <div class="td-empty" hidden>No closed trades yet.</div>
@@ -365,7 +368,7 @@ dash.calc('equity', {
   fn: (history) => {
     let total = 0;
     return [...history].sort((a, b) => (a.closed + a.id < b.closed + b.id ? -1 : 1))
-      .map((h) => { total += Number(h.return_pct); return { id: h.id, ticker: h.ticker, closed: h.closed, return_pct: Number(h.return_pct), cumulative_pct: Math.round(total * 100) / 100 }; });
+      .map((h) => { total += Number(h.return_pct); return { id: h.id, ticker: h.ticker, name: h.name || h.ticker, closed: h.closed, return_pct: Number(h.return_pct), cumulative_pct: Math.round(total * 100) / 100 }; });
   },
 });
 </script>
@@ -379,6 +382,7 @@ const shortSetup = (s) => String(s || '').replace(/ — .*/, '').replace(/\(.*\)
 const ACTION_CLASS = { SELL: 'down', TP1: 'up', HOLD: 'muted', NEW: 'gold' };
 const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 const rowsOf = (id) => { const d = dash.data(id); return d.status === 'ok' ? d.data : []; };
+const nameCell = (td, r) => { const w = el('span', 'td-nm'); w.append(el('b', '', r.name || r.ticker), el('small', '', String(r.ticker).replace('.KL', ''))); td.replaceChildren(w); if (r.company) td.title = r.company; };
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
 
 /* ---- count-up numbers ---- */
@@ -412,7 +416,7 @@ function drawTape() {
   if (!rows.length) { track.replaceChildren(el('span', 'td-tape-item muted', dash.data('positions').status === 'ok' ? 'No open trades' : '')); track.classList.remove('run'); return; }
   const item = (r) => {
     const s = el('span', 'td-tape-item');
-    const b = el('b', '', r.ticker);
+    const b = el('b', '', r.name || r.ticker);
     const v = el('span', sgn(r.pnl_pct), (r.pnl_pct > 0 ? '▲ +' : r.pnl_pct < 0 ? '▼ ' : '') + fmt(r.pnl_pct, 2) + '%');
     v.dataset.source = 'positions'; v.dataset.field = 'pnl_pct'; v.dataset.where = 'ticker=' + encodeURIComponent(r.ticker) + '&status=' + encodeURIComponent(r.status);
     s.append(b, v, el('span', ACTION_CLASS[r.action] || 'muted', r.action));
@@ -483,7 +487,7 @@ document.querySelectorAll('th[data-field] button').forEach((btn) => btn.addEvent
   th.setAttribute('aria-sort', TD.sort[id].dir);
   if (table.closest('.td-list')) drawLists(); else drawLower();
 }));
-function visibleRows(id) { return sortRows(id, rowsOf(id).filter((r) => !TD.q || String(r.ticker).toUpperCase().includes(TD.q))); }
+function visibleRows(id) { return sortRows(id, rowsOf(id).filter((r) => !TD.q || [r.ticker, r.name, r.company].some((v) => String(v || '').toUpperCase().includes(TD.q)))); }
 
 /* ---- selection ---- */
 function select(ticker, kind) {
@@ -495,11 +499,11 @@ function select(ticker, kind) {
 /* ---- market watch lists ---- */
 const runDate = () => (rowsOf('run')[0] || {}).run_date;
 const LIST_COLS = {
-  signals: [(td, r) => { td.textContent = r.ticker; }, (td, r) => { td.textContent = fmt(r.entry); },
+  signals: [nameCell, (td, r) => { td.textContent = fmt(r.entry); },
             (td, r) => { td.textContent = fmt(r.stop_pct, 1); td.className = 'down'; }, (td, r) => { td.textContent = fmt(r.rr, 1); }],
-  positions: [(td, r) => { td.textContent = r.ticker; }, (td, r) => { td.textContent = r.action; td.className = ACTION_CLASS[r.action] || ''; },
+  positions: [nameCell, (td, r) => { td.textContent = r.action; td.className = ACTION_CLASS[r.action] || ''; },
               (td, r) => { td.textContent = fmt(r.pnl_pct, 2); td.className = sgn(r.pnl_pct); }, (td, r) => { td.textContent = r.days_held === null ? '—' : r.days_held; }],
-  watchlist: [(td, r) => { td.textContent = r.ticker; }, (td, r) => { td.textContent = r.stage; td.className = Number(r.stage) >= 7 ? 'gold' : ''; },
+  watchlist: [nameCell, (td, r) => { td.textContent = r.stage; td.className = Number(r.stage) >= 7 ? 'gold' : ''; },
               (td, r) => { td.textContent = fmt(r.close); }, (td, r) => { td.textContent = fmt(r.rsi14, 1); }],
 };
 const isNew = { signals: (r) => r.date === runDate(), positions: (r) => r.action === 'NEW', watchlist: (r) => r.changed_today };
@@ -518,7 +522,7 @@ function drawLists(animate) {
     list.querySelector('tbody').replaceChildren(...rows.map((r, n) => {
       const tr = el('tr', 'td-row');
       tr.tabIndex = 0;
-      if (id === 'positions') tr.dataset.key = encodeURIComponent(r.ticker) + ',' + encodeURIComponent(r.status);
+      tr.dataset.key = id === 'positions' ? encodeURIComponent(r.ticker) + ',' + encodeURIComponent(r.status) : r.ticker;
       tr.setAttribute('aria-selected', String(TD.ticker === r.ticker && TD.kind === id));
       if (isNew[id](r)) tr.classList.add('is-new');
       if (isAlert[id](r) && firstShow) tr.classList.add('is-alert');
@@ -594,7 +598,7 @@ function drawTicket(animate) {
   const nodes = [];
   if (kind === 'signals') {
     badge.textContent = 'BUY'; badge.className = 'td-pill up';
-    nodes.push(el('div', 'kind', r.setup));
+    nodes.push(el('div', 'kind', [r.company, r.setup].filter(Boolean).join(' · ')));
     const big = el('div', 'td-big num', fmt(r.entry)); Object.assign(big.dataset, { source: 'signals', field: 'entry', where: w });
     const head = el('div'); head.append(el('div', 'muted', 'Buy near'), big); nodes.push(head);
     nodes.push(ladder(r.stop, r.entry, r.tp1, r.tp2, r.entry));
@@ -618,7 +622,7 @@ function drawTicket(animate) {
   } else if (kind === 'positions') {
     badge.textContent = r.action; badge.className = 'td-pill ' + (ACTION_CLASS[r.action] || 'muted');
     const pw = w + '&status=' + encodeURIComponent(r.status);
-    nodes.push(el('div', 'kind', `${r.setup} · opened ${r.opened}`));
+    nodes.push(el('div', 'kind', [r.company, r.setup, 'opened ' + r.opened].filter(Boolean).join(' · ')));
     const big = el('div', 'td-big num ' + sgn(r.pnl_pct), (r.pnl_pct > 0 ? '+' : '') + fmt(r.pnl_pct, 2) + '%'); Object.assign(big.dataset, { source: 'positions', field: 'pnl_pct', where: pw });
     const head = el('div'); head.append(el('div', 'muted', r.status === 'open' ? 'Unrealised P/L' : 'Closed today'), big); nodes.push(head);
     if (r.status === 'open') {
@@ -636,7 +640,7 @@ function drawTicket(animate) {
     if (r.note) { const n = el('div', 'td-note', r.note); Object.assign(n.dataset, { source: 'positions', field: 'note', where: pw }); nodes.push(n); }
   } else {
     badge.textContent = 'WATCH'; badge.className = 'td-pill gold';
-    nodes.push(el('div', 'kind', `Swing setup · ${r.stage_name}`));
+    nodes.push(el('div', 'kind', [r.company, 'Swing setup · ' + r.stage_name].filter(Boolean).join(' · ')));
     const big = el('div', 'td-big num', `Stage ${r.stage}/8`); Object.assign(big.dataset, { source: 'watchlist', field: 'stage', where: w });
     nodes.push(big);
     const prog = el('div'); prog.setAttribute('role', 'img'); prog.setAttribute('aria-label', `Stage ${r.stage} of 8`);
@@ -681,8 +685,8 @@ function drawChart() {
   const box = document.getElementById('c-box');
   const p = dash.data('prices');
   const cur = current();
-  document.getElementById('c-ticker').textContent = TD.ticker || '—';
-  document.getElementById('c-setup').textContent = cur ? (cur.kind === 'watchlist' ? 'watchlist' : shortSetup(cur.r.setup)) : '';
+  document.getElementById('c-ticker').textContent = cur ? (cur.r.name || TD.ticker) : (TD.ticker || '—');
+  document.getElementById('c-setup').textContent = cur ? [String(TD.ticker).replace('.KL', ''), cur.r.company, cur.kind === 'watchlist' ? 'watchlist' : shortSetup(cur.r.setup)].filter(Boolean).join(' · ') : '';
   if (p.status === 'error') { box.classList.remove('dash-skeleton'); box.replaceChildren(el('div', 'td-fail', 'Failed to load')); return; }
   if (p.status !== 'ok') { box.classList.add('dash-skeleton'); box.replaceChildren(); return; }
   box.classList.remove('dash-skeleton');
@@ -702,7 +706,7 @@ function drawChart() {
   const priceH = 270, volTop = 288, volH = 44, rsiTop = 348, rsiH = 60;
   const mono = 'ui-monospace, Consolas, monospace';
 
-  const svg = d3.create('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('role', 'img').attr('aria-label', `Daily candles for ${TD.ticker}`);
+  const svg = d3.create('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('role', 'img').attr('aria-label', `Daily candles for ${cur ? cur.r.name || TD.ticker : TD.ticker}`);
   const probe = svg.append('text').attr('font-size', 11).attr('font-family', mono).text('Cut loss ' + d3.format('.3~f')(hi + pad));
   document.getElementById('desk').append(svg.node());
   const labW = probe.node().getComputedTextLength(); probe.remove(); svg.node().remove();
@@ -859,7 +863,7 @@ function drawEquity() {
       const i = Math.max(0, Math.min(rows.length - 1, Math.round(x.invert(mx))));
       const r = rows[i];
       tip.hidden = false;
-      tip.replaceChildren(el('div', 'muted', `${r.closed} · ${r.ticker}`), el('div', sgn(r.return_pct), `Trade ${(r.return_pct > 0 ? '+' : '') + fmt(r.return_pct, 2)}%`), el('div', '', `Total ${(r.cumulative_pct > 0 ? '+' : '') + fmt(r.cumulative_pct, 2)}%`));
+      tip.replaceChildren(el('div', 'muted', `${r.closed} · ${r.name}`), el('div', sgn(r.return_pct), `Trade ${(r.return_pct > 0 ? '+' : '') + fmt(r.return_pct, 2)}%`), el('div', '', `Total ${(r.cumulative_pct > 0 ? '+' : '') + fmt(r.cumulative_pct, 2)}%`));
       const px = x(i) / W * box.clientWidth;
       tip.style.left = Math.min(box.clientWidth - 150, Math.max(8, px + 12)) + 'px';
       tip.style.top = '12px';
@@ -869,7 +873,7 @@ function drawEquity() {
 }
 function drawLower() {
   fillTable('history', [
-    (td, r) => { td.textContent = r.ticker; td.className = 'txt'; },
+    (td, r) => { nameCell(td, r); td.className = 'txt'; },
     (td, r) => { td.textContent = r.kind; td.className = 'txt'; },
     (td, r) => { td.textContent = r.opened; },
     (td, r) => { td.textContent = r.closed; },
