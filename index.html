@@ -1,0 +1,914 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>KLSE Trading Desk</title>
+<meta name="description" content="Daily KLSE screener signals with trade plans, open trades, watchlist and backtest scoreboard.">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0a0e13">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0e13'/%3E%3Crect x='7' y='10' width='4' height='12' fill='%2322b28f'/%3E%3Crect x='14' y='6' width='4' height='14' fill='%23f2b431'/%3E%3Crect x='21' y='12' width='4' height='10' fill='%23f0565a'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Instrument+Sans:wght@400;500;600&family=Instrument+Serif&display=swap">
+<style>
+:root {
+  --font-anthropic-sans: "Instrument Sans", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-anthropic-serif: "Instrument Serif", Georgia, "Times New Roman", serif;
+  --cds-font-size-caption: 12px; --cds-font-size-body: 14px; --cds-font-size-heading: 18px; --cds-font-size-title: 30px;
+  --cds-font-weight-medium: 600;
+  --cds-pad-xs: 4px; --cds-pad-sm: 8px; --cds-pad-md: 12px; --cds-pad-lg: 16px; --cds-pad-xl: 24px;
+  --cds-gap-xs: 4px; --cds-gap-sm: 8px; --cds-gap-md: 12px; --cds-gap-lg: 16px; --cds-gap-xl: 28px;
+  --cds-radius: 10px; --cds-shadow-popover: 0 10px 30px rgba(0, 0, 0, .45); --cds-dur-slow: .4s;
+  --color-bad: #f0565a;
+  color-scheme: dark;
+}
+html, body { margin: 0; background: #06090d; }
+body { padding-block: max(12px, env(safe-area-inset-top, 0px)) max(12px, env(safe-area-inset-bottom, 0px));
+  padding-left: max(12px, env(safe-area-inset-left, 0px)); padding-right: max(12px, env(safe-area-inset-right, 0px)); }
+.site { max-width: 1500px; margin-inline: auto; }
+.dash-skeleton { background: linear-gradient(90deg, #10161e 0%, #161f2a 50%, #10161e 100%); background-size: 200% 100%; border-radius: 8px; }
+@media (prefers-reduced-motion: no-preference) { .dash-skeleton { animation: sk 1.4s ease-in-out infinite; } @keyframes sk { to { background-position: -200% 0; } } }
+</style>
+<style>
+/* Trading terminal: ticker tape, KPI strip, market watch | chart | trade ticket, then tabs for history, equity, scoreboard.
+   Motion follows the Event Memories approach: count-up numbers, sliding tabs, gold glow + "New" on fresh items, bursts, skeletons. */
+.td {
+  --td-bg: #0a0e13; --td-panel: #10161e; --td-panel-2: #0c1219; --td-line: #1c2734; --td-line-2: #26354a;
+  --td-fg: #d9e1eb; --td-muted: #7e8b9a; --td-up: #22b28f; --td-down: #f0565a;
+  --td-gold: #f2b431; --td-ma50: #4f8cff; --td-ma200: #b07cff; --td-sel: #18222f;
+  --td-mono: ui-monospace, "SF Mono", "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+  --td-ease: cubic-bezier(.2, .8, .2, 1);
+  background: var(--td-bg); color: var(--td-fg); color-scheme: dark;
+  font-family: var(--font-anthropic-sans); font-size: var(--cds-font-size-body);
+  padding: var(--cds-pad-md); display: grid; gap: var(--cds-gap-md); border-radius: var(--cds-radius); overflow: hidden;
+}
+.td .num { font-family: var(--td-mono); font-variant-numeric: tabular-nums; }
+.td .muted { color: var(--td-muted); }
+.td .up { color: var(--td-up); } .td .down { color: var(--td-down); } .td .gold { color: var(--td-gold); }
+.td button { font: inherit; color: inherit; }
+.td :focus-visible { outline: 2px solid var(--td-gold); outline-offset: 2px; }
+
+/* top bar + live dot */
+.td-top { display: flex; flex-wrap: wrap; align-items: center; gap: var(--cds-gap-sm) var(--cds-gap-lg); }
+.td-brand { font-family: var(--font-anthropic-serif); font-weight: 400; font-size: var(--cds-font-size-title); margin: 0; }
+.td-sub { color: var(--td-muted); font-size: var(--cds-font-size-caption); }
+.td-live { display: inline-flex; align-items: center; gap: 6px; font-size: var(--cds-font-size-caption); color: var(--td-muted);
+  border: 1px solid var(--td-line); border-radius: 999px; padding: 2px 10px; }
+.td-live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--td-up); }
+
+/* ticker tape */
+.td-tape-run { position: relative; overflow: hidden; border-block: 1px solid var(--td-line); background: var(--td-panel-2);
+  mask-image: linear-gradient(90deg, transparent, #000 6%, #000 94%, transparent); min-height: 2.1rem; }
+.td-tape-track { display: flex; width: max-content; gap: var(--cds-gap-xl); padding: 8px 0; }
+.td-tape-item { display: inline-flex; gap: 8px; align-items: baseline; font-family: var(--td-mono); font-size: var(--cds-font-size-caption); white-space: nowrap; }
+.td-tape-item b { font-weight: 500; color: var(--td-fg); }
+
+/* KPI strip */
+.td-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 8.5rem), 1fr)); gap: 1px;
+  background: var(--td-line); border: 1px solid var(--td-line); border-radius: var(--cds-radius); overflow: hidden; }
+.td-kpi { background: var(--td-panel); padding: var(--cds-pad-sm) var(--cds-pad-md); display: grid; gap: 2px; min-height: 3.8rem; }
+.td-kpi .lbl { color: var(--td-muted); font-size: var(--cds-font-size-caption); letter-spacing: .05em; text-transform: uppercase; }
+.td-kpi .val { font-family: var(--td-mono); font-size: var(--cds-font-size-heading); font-variant-numeric: tabular-nums; }
+
+/* desk layout */
+.td-desk { display: grid; gap: var(--cds-gap-md); grid-template-columns: minmax(0, 18rem) minmax(0, 1fr) minmax(0, 18rem); align-items: start; }
+@media (max-width: 1150px) { .td-desk { grid-template-columns: minmax(0, 1fr) minmax(0, 18rem); } .td-watch { grid-column: 1 / -1; } }
+@media (max-width: 760px) { .td-desk { grid-template-columns: minmax(0, 1fr); } }
+.td-panel { background: var(--td-panel); border: 1px solid var(--td-line); border-radius: var(--cds-radius); min-width: 0; }
+.td-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: var(--cds-gap-sm);
+  padding: var(--cds-pad-sm) var(--cds-pad-md); border-bottom: 1px solid var(--td-line); }
+.td-head h2 { margin: 0; font-size: var(--cds-font-size-body); font-weight: var(--cds-font-weight-medium); display: flex; align-items: baseline; gap: 8px; }
+
+/* sliding tabs (one highlight that moves) */
+.td-tabs { position: relative; display: grid; grid-auto-flow: column; grid-auto-columns: 1fr; padding: 3px; margin: var(--cds-pad-xs);
+  background: var(--td-panel-2); border: 1px solid var(--td-line); border-radius: 999px; }
+.td-tabs::before { content: ""; position: absolute; top: 3px; bottom: 3px; left: 3px; border-radius: 999px; background: var(--td-sel);
+  box-shadow: inset 0 0 0 1px var(--td-line-2); width: calc((100% - 6px) / var(--n, 3)); transform: translateX(calc(100% * var(--i, 0)));
+  transition: transform .35s var(--td-ease); }
+.td-tab { position: relative; z-index: 1; background: none; border: 0; border-radius: 999px; padding: 5px 8px; cursor: pointer;
+  color: var(--td-muted); font-size: var(--cds-font-size-caption); transition: color .2s; white-space: nowrap; }
+.td-tab[aria-selected="true"] { color: var(--td-fg); }
+.td-tab .ct { font-family: var(--td-mono); margin-left: 5px; opacity: .8; }
+
+/* search */
+.td-search { display: flex; align-items: center; gap: 6px; margin: 0 var(--cds-pad-xs) var(--cds-pad-xs); padding: 4px 10px;
+  border: 1px solid var(--td-line); border-radius: var(--cds-radius); background: var(--td-panel-2); }
+.td-search input { flex: 1; min-width: 0; background: none; border: 0; color: var(--td-fg); font: inherit; font-size: var(--cds-font-size-caption); }
+.td-search input:focus { outline: none; }
+.td-search:focus-within { border-color: var(--td-gold); }
+.td-search kbd { font-family: var(--td-mono); font-size: 10px; color: var(--td-muted); border: 1px solid var(--td-line); border-radius: 4px; padding: 0 4px; }
+
+/* lists */
+.td-list { max-height: 31rem; overflow: auto; }
+.td-list table, .td-table table { width: 100%; border-collapse: collapse; font-size: var(--cds-font-size-caption); }
+.td-list th, .td-table th { position: sticky; top: 0; z-index: 1; background: var(--td-panel); color: var(--td-muted); font-weight: 400; text-align: right;
+  padding: 0; border-bottom: 1px solid var(--td-line); white-space: nowrap; }
+.td-list th button, .td-table th button { all: unset; display: block; width: 100%; box-sizing: border-box; padding: var(--cds-pad-xs) var(--cds-pad-sm); cursor: pointer; text-align: inherit; }
+.td-list th button:focus-visible, .td-table th button:focus-visible { outline: 2px solid var(--td-gold); outline-offset: -2px; }
+.td-list th[aria-sort] button::after, .td-table th[aria-sort] button::after { content: " ↓"; color: var(--td-gold); }
+.td-list th[aria-sort="ascending"] button::after, .td-table th[aria-sort="ascending"] button::after { content: " ↑"; }
+.td-list th:first-child, .td-list td:first-child, .td-table th.txt, .td-table td.txt { text-align: left; }
+.td-list td, .td-table td { padding: 7px var(--cds-pad-sm); text-align: right; border-bottom: 1px solid var(--td-panel-2);
+  font-family: var(--td-mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.td-table td.txt { font-family: var(--font-anthropic-sans); }
+.td-row { cursor: pointer; transition: background .15s; }
+.td-row:hover { background: var(--td-panel-2); }
+.td-row[aria-selected="true"] { background: var(--td-sel); box-shadow: inset 2px 0 0 var(--td-gold); }
+.td-row:focus-visible { outline: 2px solid var(--td-gold); outline-offset: -2px; }
+.td-row.is-new td:first-child::after { content: "NEW"; margin-left: 6px; font-family: var(--font-anthropic-sans); font-size: 9px; letter-spacing: .08em;
+  color: var(--td-bg); background: var(--td-gold); border-radius: 3px; padding: 1px 4px; vertical-align: 1px; }
+.td-empty { padding: var(--cds-pad-md); color: var(--td-muted); font-size: var(--cds-font-size-caption); }
+.td-pill { display: inline-block; padding: 1px 8px; border-radius: 999px; font-size: 11px; letter-spacing: .05em; border: 1px solid currentColor; }
+
+/* chart */
+.td-tools { display: flex; flex-wrap: wrap; gap: 4px; }
+.td-chip { background: var(--td-panel-2); border: 1px solid var(--td-line); border-radius: 999px; padding: 2px 9px; cursor: pointer;
+  font-size: 11px; color: var(--td-muted); transition: color .2s, border-color .2s, background .2s; }
+.td-chip[aria-pressed="true"] { color: var(--td-fg); border-color: var(--td-line-2); background: var(--td-sel); }
+.td-chip .sw { display: inline-block; width: 9px; height: 2px; vertical-align: middle; margin-right: 5px; }
+.td-ohlc { font-family: var(--td-mono); font-size: var(--cds-font-size-caption); color: var(--td-muted); padding: var(--cds-pad-xs) var(--cds-pad-md) 0; min-height: 1.5em;
+  display: flex; flex-wrap: wrap; gap: 4px 12px; }
+.td-ohlc b { color: var(--td-fg); font-weight: 400; }
+.td-chart-wrap { position: relative; min-height: 27rem; }
+.td-chart-wrap svg { display: block; }
+.td-ticker { font-family: var(--td-mono); font-size: var(--cds-font-size-heading); }
+
+/* ticket */
+.td-ticket { padding: var(--cds-pad-md); display: grid; gap: var(--cds-gap-sm); }
+.td-ticket .kind { font-size: var(--cds-font-size-caption); color: var(--td-muted); line-height: 1.4; }
+.td-big { font-family: var(--font-anthropic-serif); font-size: var(--cds-font-size-title); font-weight: 400; line-height: 1.1; }
+.td-kv { display: grid; grid-template-columns: auto 1fr; gap: 6px var(--cds-gap-md); font-size: var(--cds-font-size-caption); margin: 0; }
+.td-kv dt { color: var(--td-muted); } .td-kv dd { margin: 0; text-align: right; font-family: var(--td-mono); font-variant-numeric: tabular-nums; }
+.td-steps { margin: 0; padding-left: 1.1rem; display: grid; gap: 5px; font-size: var(--cds-font-size-caption); color: var(--td-muted); line-height: 1.4; }
+.td-note { font-size: var(--cds-font-size-caption); line-height: 1.45; padding: var(--cds-pad-sm); border-radius: var(--cds-radius);
+  background: var(--td-panel-2); border: 1px solid var(--td-line); }
+.td-ticket.is-in > * { animation: td-rise .35s var(--td-ease) backwards; }
+.td-ticket.is-in > *:nth-child(2) { animation-delay: .04s; } .td-ticket.is-in > *:nth-child(3) { animation-delay: .08s; }
+.td-ticket.is-in > *:nth-child(4) { animation-delay: .12s; } .td-ticket.is-in > *:nth-child(5) { animation-delay: .16s; }
+.td-ticket.is-in > *:nth-child(n+6) { animation-delay: .2s; }
+
+/* price ladder: cut loss -> entry -> TP1 -> TP2, with the current price */
+.td-ladder { position: relative; height: 62px; margin: 4px 6px 0; }
+.td-ladder .rail { position: absolute; left: 0; right: 0; top: 18px; height: 6px; border-radius: 3px;
+  background: linear-gradient(90deg, var(--td-down) 0 var(--e, 33%), var(--td-up) var(--e, 33%) 100%); opacity: .35; }
+.td-ladder .tick { position: absolute; top: 12px; width: 2px; height: 18px; background: var(--td-fg); opacity: .6; transform: translateX(-1px); }
+.td-ladder .tag { position: absolute; top: 32px; transform: translateX(-50%); font-size: 10px; color: var(--td-muted); white-space: nowrap; font-family: var(--td-mono); }
+.td-ladder .tag.l { transform: none; } .td-ladder .tag.r { transform: translateX(-100%); }
+.td-ladder .now { position: absolute; top: 2px; transform: translateX(-50%); font-size: 10px; font-family: var(--td-mono); color: var(--td-bg);
+  background: var(--td-gold); border-radius: 3px; padding: 0 4px; transition: left .5s var(--td-ease); }
+.td-ladder .now::after { content: ""; position: absolute; left: 50%; top: 100%; transform: translateX(-50%); border: 4px solid transparent; border-top-color: var(--td-gold); }
+
+/* lot calculator */
+.td-calc { display: grid; gap: 6px; padding: var(--cds-pad-sm); border: 1px dashed var(--td-line-2); border-radius: var(--cds-radius); font-size: var(--cds-font-size-caption); }
+.td-calc label { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--td-muted); }
+.td-calc input { width: 7rem; background: var(--td-panel-2); border: 1px solid var(--td-line); border-radius: 6px; color: var(--td-fg);
+  font: inherit; font-family: var(--td-mono); padding: 3px 6px; text-align: right; }
+.td-calc output { font-family: var(--td-mono); color: var(--td-fg); }
+
+/* lower tabs */
+.td-lower .td-tabs { max-width: 26rem; }
+.td-table { overflow: auto; max-height: 24rem; }
+.td-bar { display: inline-block; height: 6px; border-radius: 3px; vertical-align: middle; }
+.td-eq { position: relative; min-height: 15rem; padding: var(--cds-pad-sm) var(--cds-pad-md); }
+.td-foot { color: var(--td-muted); font-size: var(--cds-font-size-caption); margin: 0; }
+.td-tip { position: absolute; pointer-events: none; background: #0d131b; border: 1px solid var(--td-line-2); border-radius: var(--cds-radius);
+  padding: var(--cds-pad-xs) var(--cds-pad-sm); font-family: var(--td-mono); font-size: var(--cds-font-size-caption); color: var(--td-fg);
+  box-shadow: var(--cds-shadow-popover); white-space: nowrap; }
+.td-fail { display: flex; align-items: center; justify-content: center; gap: 6px; color: var(--td-muted); font-size: var(--cds-font-size-caption); min-height: inherit; }
+.td-fail::before { content: ""; width: .375rem; height: .375rem; border-radius: 50%; background: var(--color-bad); }
+.td [data-dash-source-state=refreshing] { opacity: .5; transition: opacity var(--cds-dur-slow); }
+.td [data-dash-source-state=empty] { color: transparent; }
+.td-burst { position: absolute; inset: -6px; border-radius: inherit; border: 2px solid var(--td-gold); pointer-events: none; opacity: 0; }
+
+@media (prefers-reduced-motion: no-preference) {
+  .td-live::before { animation: td-pulse 2s ease-in-out infinite; }
+  .td-tape-track.run { animation: td-marquee var(--dur, 40s) linear infinite; }
+  .td-tape-run:hover .td-tape-track { animation-play-state: paused; }
+  .td-row.is-new, .td-row.is-alert { animation: td-glow 1.8s ease-in-out .3s 3; }
+  .td-row.is-in { animation: td-rise .35s var(--td-ease) backwards; }
+  .td-burst.go { animation: td-burst .6s var(--td-ease); }
+  .td-candles.grow rect, .td-candles.grow line { transform-box: fill-box; transform-origin: bottom; animation: td-grow .5s var(--td-ease) backwards; }
+  .td-draw { stroke-dasharray: 1; stroke-dashoffset: 1; animation: td-draw 1s var(--td-ease) .15s forwards; }
+}
+@media (prefers-reduced-motion: reduce) { .td-tabs::before, .td-ladder .now { transition: none; } }
+@keyframes td-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(34, 178, 143, .6); } 50% { box-shadow: 0 0 0 5px rgba(34, 178, 143, 0); } }
+@keyframes td-marquee { to { transform: translateX(-50%); } }
+@keyframes td-glow { 50% { box-shadow: inset 2px 0 0 var(--td-gold), inset 0 0 0 999px rgba(242, 180, 49, .10); } }
+@keyframes td-rise { from { opacity: 0; transform: translateY(6px); } }
+@keyframes td-burst { from { opacity: 1; transform: scale(.9); } to { opacity: 0; transform: scale(1.15); } }
+@keyframes td-grow { from { transform: scaleY(0); } }
+@keyframes td-draw { to { stroke-dashoffset: 0; } }
+</style>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.9.0/d3.min.js"></script>
+</head>
+<body>
+<div class="site">
+
+<script>
+/* Stand-in for the dashboard's `dash` API: loads data/<id>.json from this site. */
+window.dash = (() => {
+  const files = ['run', 'signals', 'positions', 'history', 'watchlist', 'prices', 'strategies'];
+  const store = {}, calcs = {}, subs = [];
+  const notify = () => subs.forEach((fn) => { try { fn(); } catch (e) { console.error(e); } });
+  files.forEach((id) => {
+    store[id] = { status: 'loading', data: [] };
+    fetch('data/' + id + '.json', { cache: 'no-cache' })
+      .then((r) => { if (!r.ok) throw new Error(r.status); return r.json(); })
+      .then((rows) => { store[id] = { status: 'ok', data: Array.isArray(rows) ? rows : (rows.rows || []) }; notify(); })
+      .catch(() => { store[id] = { status: 'error', data: [] }; notify(); });
+  });
+  let t;
+  window.addEventListener('resize', () => { clearTimeout(t); t = setTimeout(notify, 150); });
+  return {
+    data(id) {
+      const c = calcs[id];
+      if (!c) return store[id] || { status: 'missing', data: [] };
+      const ins = c.inputs.map((i) => this.data(i));
+      if (ins.some((d) => d.status === 'error')) return { status: 'error', data: [] };
+      if (ins.some((d) => d.status !== 'ok')) return { status: 'loading', data: [] };
+      return { status: 'ok', data: c.fn(...ins.map((d) => d.data)) };
+    },
+    calc(id, spec) { calcs[id] = spec; },
+    onData(fn) { subs.push(fn); fn(); },
+    setLink(name) { try { history.replaceState(null, '', '#' + name); } catch (e) {} },
+    params: () => ({}), setParams() {}, resetParams() {}, refresh() {},
+  };
+})();
+dash.onData(() => {
+  const r = dash.data('run');
+  const n = document.getElementById('updated-at');
+  if (n && r.status === 'ok' && r.data[0]) n.textContent = new Date(r.data[0].generated_at).toLocaleString('en-MY', { dateStyle: 'medium', timeStyle: 'short' });
+});
+</script>
+
+
+<div class="td" id="desk">
+  <div class="td-top">
+    <h1 class="td-brand">KLSE Trading Desk</h1>
+    <span class="td-live">Close of&nbsp;<span class="num" data-source="run" data-field="run_date" data-row="0">—</span></span>
+    <span class="td-sub">Signals are for the next session · updated <span class="num" id="updated-at">—</span> · press <span class="num">/</span> to search</span>
+  </div>
+
+  <div class="td-tape-run" id="tape" aria-label="Open trades ticker" data-source="positions">
+    <div class="td-tape-track" id="tape-track"></div>
+  </div>
+
+  <div class="td-kpis" id="kpis">
+    <div class="td-kpi"><span class="lbl">BUY signals</span><span class="val" data-count data-source="run" data-field="signals" data-row="0">—</span></div>
+    <div class="td-kpi"><span class="lbl">Open trades</span><span class="val" data-count data-source="run" data-field="open_trades" data-row="0">—</span></div>
+    <div class="td-kpi"><span class="lbl">Watchlist</span><span class="val" data-count data-source="run" data-field="watchlist" data-row="0">—</span></div>
+    <div class="td-kpi"><span class="lbl">Closed trades</span><span class="val" data-count data-source="record" data-field="trades" data-row="0">—</span></div>
+    <div class="td-kpi"><span class="lbl">Win rate %</span><span class="val" data-count="1" data-source="record" data-field="win_rate" data-row="0">—</span></div>
+    <div class="td-kpi"><span class="lbl">Avg / trade %</span><span class="val" data-count="2" data-sign data-source="record" data-field="avg_pct" data-row="0">—</span></div>
+    <div class="td-kpi"><span class="lbl">Stocks scanned</span><span class="val" data-count data-source="run" data-field="checked" data-row="0">—</span></div>
+  </div>
+
+  <div class="td-desk">
+    <section class="td-panel td-watch" id="market-watch" aria-label="Market watch">
+      <div class="td-head"><h2>Market watch</h2><span class="td-sub">click or ↑ ↓</span></div>
+      <div class="td-tabs" role="tablist" id="watch-tabs" style="--n: 3">
+        <button class="td-tab" role="tab" id="tab-signals" data-tab="signals" aria-selected="true">Signals<span class="ct" id="ct-signals"></span></button>
+        <button class="td-tab" role="tab" id="tab-positions" data-tab="positions" aria-selected="false">Trades<span class="ct" id="ct-positions"></span></button>
+        <button class="td-tab" role="tab" id="tab-watchlist" data-tab="watchlist" aria-selected="false">Watch<span class="ct" id="ct-watchlist"></span></button>
+      </div>
+      <label class="td-search"><span class="muted" aria-hidden="true">⌕</span><input id="q" type="search" placeholder="Find a stock code" aria-label="Find a stock code" autocomplete="off"><kbd>/</kbd></label>
+      <div class="td-list" data-list="signals">
+        <table data-source="signals" data-row-key="ticker">
+          <thead><tr><th data-field="ticker"><button>Stock</button></th><th data-field="entry"><button>Buy</button></th><th data-field="stop_pct"><button>Risk %</button></th><th data-field="rr"><button>R:R</button></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="td-empty" hidden>No BUY signals at this close.</div>
+      </div>
+      <div class="td-list" data-list="positions" hidden>
+        <table data-source="positions" data-row-key="ticker,status">
+          <thead><tr><th data-field="ticker"><button>Stock</button></th><th data-field="action"><button>Today</button></th><th data-field="pnl_pct"><button>P/L %</button></th><th data-field="days_held"><button>Day</button></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="td-empty" hidden>No open trades.</div>
+      </div>
+      <div class="td-list" data-list="watchlist" hidden>
+        <table data-source="watchlist" data-row-key="ticker">
+          <thead><tr><th data-field="ticker"><button>Stock</button></th><th data-field="stage"><button>Stage</button></th><th data-field="close"><button>Close</button></th><th data-field="rsi14"><button>RSI</button></th></tr></thead>
+          <tbody></tbody>
+        </table>
+        <div class="td-empty" hidden>Nothing on the watchlist.</div>
+      </div>
+    </section>
+
+    <section class="td-panel" id="chart" aria-label="Price chart">
+      <div class="td-head">
+        <h2><span class="td-ticker" id="c-ticker">—</span><span class="td-sub" id="c-setup"></span></h2>
+        <div class="td-tools" role="group" aria-label="Chart options">
+          <button class="td-chip" data-range="22" aria-pressed="false">1M</button>
+          <button class="td-chip" data-range="66" aria-pressed="false">3M</button>
+          <button class="td-chip" data-range="120" aria-pressed="true">6M</button>
+          <button class="td-chip" data-layer="ma50" aria-pressed="true"><span class="sw" style="background: var(--td-ma50)"></span>MA50</button>
+          <button class="td-chip" data-layer="ma200" aria-pressed="true"><span class="sw" style="background: var(--td-ma200)"></span>MA200</button>
+          <button class="td-chip" data-layer="levels" aria-pressed="true"><span class="sw" style="background: var(--td-gold)"></span>Plan</button>
+        </div>
+      </div>
+      <div class="td-ohlc" id="c-ohlc"></div>
+      <div class="td-chart-wrap dash-skeleton" id="c-box" data-source="prices signals positions watchlist"></div>
+    </section>
+
+    <section class="td-panel" id="ticket" aria-label="Trade ticket" style="position: relative">
+      <div class="td-head"><h2>Trade ticket</h2><span class="td-pill gold" id="t-badge">—</span></div>
+      <div class="td-ticket" id="t-body"><div class="td-empty">Pick a stock from Market watch.</div></div>
+      <span class="td-burst" id="t-burst"></span>
+    </section>
+  </div>
+
+  <section class="td-panel td-lower" id="lower" aria-label="Performance">
+    <div class="td-head">
+      <div class="td-tabs" role="tablist" id="lower-tabs" style="--n: 3; margin: 0; flex: 1">
+        <button class="td-tab" role="tab" id="tab-history" data-ltab="history" aria-selected="true">Trade history</button>
+        <button class="td-tab" role="tab" id="tab-equity" data-ltab="equity" aria-selected="false">Equity curve</button>
+        <button class="td-tab" role="tab" id="tab-scoreboard" data-ltab="scoreboard" aria-selected="false">Scoreboard</button>
+      </div>
+      <span class="td-sub" id="lower-note">tracked from signals, before costs</span>
+    </div>
+    <div data-lpane="history" class="td-table">
+      <table data-source="history" data-row-key="id">
+        <thead><tr><th class="txt" data-field="ticker"><button>Stock</button></th><th class="txt" data-field="kind"><button>Setup</button></th><th data-field="opened"><button>Opened</button></th><th data-field="closed"><button>Closed</button></th><th class="txt" data-field="reason"><button>Exit</button></th><th data-field="return_pct"><button>Return %</button></th></tr></thead>
+        <tbody></tbody>
+      </table>
+      <div class="td-empty" hidden>No closed trades yet.</div>
+    </div>
+    <div data-lpane="equity" class="td-eq dash-skeleton" id="eq-box" data-source="equity" hidden></div>
+    <div data-lpane="scoreboard" class="td-table" hidden>
+      <table data-source="strategies" data-row-key="source,section">
+        <thead><tr><th class="txt" data-field="strategy"><button>Setup</button></th><th class="txt" data-field="source"><button>Type</button></th><th data-field="trades"><button>Trades</button></th><th data-field="win_rate_net"><button>Win %</button></th><th data-field="avg_net_pct"><button>Avg %</button></th><th class="txt" data-field="avg_raw_pct"><button>Before costs %</button></th></tr></thead>
+        <tbody></tbody>
+      </table>
+    </div>
+  </section>
+  <p class="td-foot">A personal screener shared among friends. Signals are mechanical rule checks on Yahoo Finance data, not investment advice or a recommendation to buy or sell; the backtests above lose money after costs. Open trades assume a buy at the planned price. Do your own checks before trading.</p>
+</div>
+
+<script>
+dash.calc('record', {
+  title: 'Tracked trade record',
+  description: 'Closed trades, how many had a positive return, and the average return.',
+  inputs: ['history'],
+  fn: (history) => {
+    const n = history.length;
+    const wins = history.filter((h) => Number(h.return_pct) > 0).length;
+    const avg = n ? history.reduce((s, h) => s + Number(h.return_pct), 0) / n : null;
+    return [{ trades: n, wins, win_rate: n ? Math.round(wins / n * 1000) / 10 : null, avg_pct: avg === null ? null : Math.round(avg * 100) / 100 }];
+  },
+});
+dash.calc('equity', {
+  title: 'Equity curve',
+  description: 'Closed trades in the order they closed, with the running sum of their returns (one equal-sized trade each).',
+  inputs: ['history'],
+  fn: (history) => {
+    let total = 0;
+    return [...history].sort((a, b) => (a.closed + a.id < b.closed + b.id ? -1 : 1))
+      .map((h) => { total += Number(h.return_pct); return { id: h.id, ticker: h.ticker, closed: h.closed, return_pct: Number(h.return_pct), cumulative_pct: Math.round(total * 100) / 100 }; });
+  },
+});
+</script>
+
+<script>
+window.TD = { tab: 'signals', ltab: 'history', ticker: null, kind: null, q: '', range: 120,
+  layers: { ma50: true, ma200: true, levels: true }, sort: {}, drawnFor: null, counted: false, ticketFor: null };
+const fmt = (v, d = 3) => (v === null || v === undefined || v === '' || isNaN(Number(v))) ? '—' : String(Number(Number(v).toFixed(d)));
+const sgn = (v) => Number(v) > 0 ? 'up' : Number(v) < 0 ? 'down' : '';
+const shortSetup = (s) => String(s || '').replace(/ — .*/, '').replace(/\(.*\)/, '').trim();
+const ACTION_CLASS = { SELL: 'down', TP1: 'up', HOLD: 'muted', NEW: 'gold' };
+const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+const rowsOf = (id) => { const d = dash.data(id); return d.status === 'ok' ? d.data : []; };
+const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+
+/* ---- count-up numbers ---- */
+function countTo(node, target, decimals, signed) {
+  const end = Number(target);
+  const show = (v) => { node.textContent = (signed && v > 0 ? '+' : '') + v.toFixed(decimals); };
+  if (!isFinite(end)) { node.textContent = '—'; return; }
+  if (reduce || TD.counted) { show(end); return; }
+  const t0 = performance.now(), dur = 900;
+  const step = (t) => { const k = Math.min(1, (t - t0) / dur); show(end * (1 - Math.pow(1 - k, 3))); if (k < 1) requestAnimationFrame(step); };
+  requestAnimationFrame(step);
+}
+function drawKpis() {
+  const run = rowsOf('run')[0], rec = rowsOf('record')[0];
+  document.querySelectorAll('[data-source="run"][data-field="run_date"]').forEach((n) => { n.textContent = run ? run.run_date : '—'; });
+  const ready = run && rec;
+  document.querySelectorAll('#kpis [data-count]').forEach((n) => {
+    const src = n.dataset.source === 'run' ? run : rec;
+    const v = src ? src[n.dataset.field] : null;
+    if (v === null || v === undefined) { n.textContent = '—'; n.className = 'val'; return; }
+    n.className = 'val ' + (n.hasAttribute('data-sign') ? sgn(v) : '');
+    countTo(n, v, Number(n.dataset.count || 0), n.hasAttribute('data-sign'));
+  });
+  if (ready) TD.counted = true;
+}
+
+/* ---- ticker tape of open trades ---- */
+function drawTape() {
+  const track = document.getElementById('tape-track');
+  const rows = rowsOf('positions').filter((r) => r.pnl_pct !== null);
+  if (!rows.length) { track.replaceChildren(el('span', 'td-tape-item muted', dash.data('positions').status === 'ok' ? 'No open trades' : '')); track.classList.remove('run'); return; }
+  const item = (r) => {
+    const s = el('span', 'td-tape-item');
+    const b = el('b', '', r.ticker);
+    const v = el('span', sgn(r.pnl_pct), (r.pnl_pct > 0 ? '▲ +' : r.pnl_pct < 0 ? '▼ ' : '') + fmt(r.pnl_pct, 2) + '%');
+    v.dataset.source = 'positions'; v.dataset.field = 'pnl_pct'; v.dataset.where = 'ticker=' + encodeURIComponent(r.ticker) + '&status=' + encodeURIComponent(r.status);
+    s.append(b, v, el('span', ACTION_CLASS[r.action] || 'muted', r.action));
+    s.style.cursor = 'pointer';
+    s.addEventListener('click', () => { setTab('positions'); select(r.ticker, 'positions'); });
+    return s;
+  };
+  // two copies so the loop is seamless
+  track.replaceChildren(...rows.map(item), ...rows.map((r) => { const n = item(r); n.setAttribute('aria-hidden', 'true'); n.querySelectorAll('[data-source]').forEach((m) => { delete m.dataset.source; delete m.dataset.field; delete m.dataset.where; }); return n; }));
+  track.style.setProperty('--dur', Math.max(20, rows.length * 4) + 's');
+  track.classList.add('run');
+}
+
+/* ---- tabs ---- */
+function moveHighlight(group, i) { group.style.setProperty('--i', i); }
+function setTab(tab) {
+  TD.tab = tab;
+  const btns = [...document.querySelectorAll('#watch-tabs .td-tab')];
+  btns.forEach((b, i) => { const on = b.dataset.tab === tab; b.setAttribute('aria-selected', String(on)); if (on) moveHighlight(document.getElementById('watch-tabs'), i); });
+  document.querySelectorAll('.td-list').forEach((l) => { l.hidden = l.dataset.list !== tab; });
+  dash.setLink('tab-' + tab);
+  drawLists(true);
+}
+document.querySelectorAll('#watch-tabs .td-tab').forEach((b) => b.addEventListener('click', () => setTab(b.dataset.tab)));
+function setLower(tab) {
+  TD.ltab = tab;
+  [...document.querySelectorAll('#lower-tabs .td-tab')].forEach((b, i) => { const on = b.dataset.ltab === tab; b.setAttribute('aria-selected', String(on)); if (on) moveHighlight(document.getElementById('lower-tabs'), i); });
+  document.querySelectorAll('[data-lpane]').forEach((p) => { p.hidden = p.dataset.lpane !== tab; });
+  document.getElementById('lower-note').textContent = tab === 'scoreboard' ? 'backtests, after 0.7% costs' : 'tracked from signals, before costs';
+  dash.setLink('tab-' + tab);
+  drawLower();
+}
+document.querySelectorAll('#lower-tabs .td-tab').forEach((b) => b.addEventListener('click', () => setLower(b.dataset.ltab)));
+
+/* ---- search, sort, keyboard ---- */
+const q = document.getElementById('q');
+q.addEventListener('input', () => { TD.q = q.value.trim().toUpperCase(); drawLists(); });
+document.addEventListener('keydown', (e) => {
+  const typing = /INPUT|TEXTAREA|SELECT/.test(document.activeElement && document.activeElement.tagName);
+  if (e.key === '/' && !typing) { e.preventDefault(); q.focus(); return; }
+  if ((e.key === 'ArrowDown' || e.key === 'ArrowUp') && (!typing || document.activeElement === q)) {
+    const rows = visibleRows(TD.tab);
+    if (!rows.length) return;
+    e.preventDefault();
+    let i = rows.findIndex((r) => r.ticker === TD.ticker && TD.kind === TD.tab);
+    i = i < 0 ? 0 : Math.max(0, Math.min(rows.length - 1, i + (e.key === 'ArrowDown' ? 1 : -1)));
+    select(rows[i].ticker, TD.tab);
+    const tr = document.querySelector(`.td-list[data-list="${TD.tab}"] tr[aria-selected="true"]`);
+    if (tr) tr.scrollIntoView({ block: 'nearest' });
+  }
+});
+function sortRows(id, rows) {
+  const s = TD.sort[id];
+  if (!s) return rows;
+  const num = rows.every((r) => r[s.field] === null || !isNaN(Number(r[s.field])));
+  return [...rows].sort((a, b) => {
+    const x = a[s.field], y = b[s.field];
+    if (x === null || x === undefined) return 1; if (y === null || y === undefined) return -1;
+    const c = num ? Number(x) - Number(y) : String(x).localeCompare(String(y));
+    return s.dir === 'ascending' ? c : -c;
+  });
+}
+document.querySelectorAll('th[data-field] button').forEach((btn) => btn.addEventListener('click', () => {
+  const th = btn.closest('th'), table = btn.closest('table'), id = table.dataset.source, field = th.dataset.field;
+  const cur = TD.sort[id];
+  TD.sort[id] = { field, dir: cur && cur.field === field && cur.dir === 'descending' ? 'ascending' : 'descending' };
+  table.querySelectorAll('th').forEach((h) => h.removeAttribute('aria-sort'));
+  th.setAttribute('aria-sort', TD.sort[id].dir);
+  if (table.closest('.td-list')) drawLists(); else drawLower();
+}));
+function visibleRows(id) { return sortRows(id, rowsOf(id).filter((r) => !TD.q || String(r.ticker).toUpperCase().includes(TD.q))); }
+
+/* ---- selection ---- */
+function select(ticker, kind) {
+  const changed = ticker !== TD.ticker || kind !== TD.kind;
+  TD.ticker = ticker; TD.kind = kind;
+  drawLists(); drawTicket(changed); drawChart();
+}
+
+/* ---- market watch lists ---- */
+const runDate = () => (rowsOf('run')[0] || {}).run_date;
+const LIST_COLS = {
+  signals: [(td, r) => { td.textContent = r.ticker; }, (td, r) => { td.textContent = fmt(r.entry); },
+            (td, r) => { td.textContent = fmt(r.stop_pct, 1); td.className = 'down'; }, (td, r) => { td.textContent = fmt(r.rr, 1); }],
+  positions: [(td, r) => { td.textContent = r.ticker; }, (td, r) => { td.textContent = r.action; td.className = ACTION_CLASS[r.action] || ''; },
+              (td, r) => { td.textContent = fmt(r.pnl_pct, 2); td.className = sgn(r.pnl_pct); }, (td, r) => { td.textContent = r.days_held === null ? '—' : r.days_held; }],
+  watchlist: [(td, r) => { td.textContent = r.ticker; }, (td, r) => { td.textContent = r.stage; td.className = Number(r.stage) >= 7 ? 'gold' : ''; },
+              (td, r) => { td.textContent = fmt(r.close); }, (td, r) => { td.textContent = fmt(r.rsi14, 1); }],
+};
+const isNew = { signals: (r) => r.date === runDate(), positions: (r) => r.action === 'NEW', watchlist: (r) => r.changed_today };
+const isAlert = { signals: () => false, positions: (r) => r.action === 'SELL' || r.action === 'TP1', watchlist: () => false };
+let listsAnimated = {};
+function drawLists(animate) {
+  ['signals', 'positions', 'watchlist'].forEach((id) => {
+    const list = document.querySelector(`.td-list[data-list="${id}"]`);
+    const d = dash.data(id);
+    const rows = d.status === 'ok' ? visibleRows(id) : [];
+    document.getElementById('ct-' + id).textContent = d.status === 'ok' ? d.data.length : '';
+    const empty = list.querySelector('.td-empty');
+    empty.hidden = !(d.status === 'ok' && rows.length === 0);
+    empty.textContent = TD.q && d.status === 'ok' && d.data.length ? `No ${TD.q} here.` : empty.dataset.base || (empty.dataset.base = empty.textContent);
+    const firstShow = d.status === 'ok' && !listsAnimated[id] && !list.hidden;
+    list.querySelector('tbody').replaceChildren(...rows.map((r, n) => {
+      const tr = el('tr', 'td-row');
+      tr.tabIndex = 0;
+      if (id === 'positions') tr.dataset.key = encodeURIComponent(r.ticker) + ',' + encodeURIComponent(r.status);
+      tr.setAttribute('aria-selected', String(TD.ticker === r.ticker && TD.kind === id));
+      if (isNew[id](r)) tr.classList.add('is-new');
+      if (isAlert[id](r) && firstShow) tr.classList.add('is-alert');
+      if ((firstShow || animate) && !reduce) { tr.classList.add('is-in'); tr.style.animationDelay = Math.min(n, 12) * 25 + 'ms'; }
+      LIST_COLS[id].forEach((c) => { const td = el('td'); c(td, r); tr.append(td); });
+      const pick = () => select(r.ticker, id);
+      tr.addEventListener('click', pick);
+      tr.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); pick(); } });
+      return tr;
+    }));
+    if (firstShow) listsAnimated[id] = true;
+  });
+}
+
+/* ---- trade ticket ---- */
+function kv(pairs) {
+  const dl = el('dl', 'td-kv');
+  pairs.forEach(([label, src, field, where, text, cls]) => {
+    const dd = el('dd', cls || '', text);
+    if (src) { dd.dataset.source = src; dd.dataset.field = field; dd.dataset.where = where; }
+    dl.append(el('dt', '', label), dd);
+  });
+  return dl;
+}
+function current() {
+  if (!TD.ticker) return null;
+  const r = rowsOf(TD.kind).find((x) => x.ticker === TD.ticker);
+  return r ? { kind: TD.kind, r } : null;
+}
+function ladder(stop, entry, tp1, tp2, now) {
+  const lo = Math.min(stop, now), hi = Math.max(tp2, now);
+  const pct = (v) => ((v - lo) / (hi - lo || 1)) * 100;
+  const wrap = el('div', 'td-ladder');
+  wrap.setAttribute('role', 'img');
+  wrap.setAttribute('aria-label', `Price ${fmt(now)} between cut loss ${fmt(stop)} and TP2 ${fmt(tp2)}`);
+  wrap.style.setProperty('--e', pct(entry) + '%');
+  wrap.append(el('div', 'rail'));
+  // labels too close to the one before drop to a second row
+  let prevRow1 = -99;
+  [[stop, 'Cut', 'l'], [entry, 'Entry', ''], [tp1, 'TP1', ''], [tp2, 'TP2', 'r']].forEach(([v, name, edge]) => {
+    const t = el('div', 'tick'); t.style.left = pct(v) + '%'; wrap.append(t);
+    const g = el('div', 'tag ' + edge, `${name} ${fmt(v)}`); g.style.left = pct(v) + '%';
+    if (pct(v) - prevRow1 < 26) g.style.top = '46px'; else prevRow1 = pct(v);
+    wrap.append(g);
+  });
+  const n = el('div', 'now', fmt(now)); n.style.left = pct(now) + '%'; wrap.append(n);
+  return wrap;
+}
+function lotCalc(riskPerLot, entry) {
+  const box = el('div', 'td-calc');
+  const lab = el('label', '', 'Max loss I accept (RM)');
+  const inp = el('input'); inp.type = 'number'; inp.min = '0'; inp.step = '50'; inp.id = 'risk-rm'; inp.placeholder = 'e.g. 200';
+  inp.value = TD.riskRm || '';
+  lab.append(inp);
+  const out = el('div', 'muted');
+  const show = () => {
+    const rm = Number(inp.value); TD.riskRm = inp.value;
+    if (!rm || !riskPerLot) { out.textContent = `Each lot (100 shares) risks RM${fmt(riskPerLot, 2)} to the cut loss.`; return; }
+    const lots = Math.floor(rm / riskPerLot);
+    out.replaceChildren('That is ', el('output', '', `${lots} lot${lots === 1 ? '' : 's'}`), ` (~RM${d3.format(',.0f')(lots * 100 * entry)} to buy, RM${fmt(lots * riskPerLot, 2)} at risk).`);
+  };
+  inp.addEventListener('input', show); show();
+  box.append(lab, out);
+  return box;
+}
+function drawTicket(animate) {
+  const body = document.getElementById('t-body');
+  const badge = document.getElementById('t-badge');
+  const cur = current();
+  if (!cur) { badge.textContent = '—'; badge.className = 'td-pill muted'; body.replaceChildren(el('div', 'td-empty', 'Pick a stock from Market watch.')); return; }
+  const { kind, r } = cur;
+  const w = 'ticker=' + encodeURIComponent(r.ticker);
+  const nodes = [];
+  if (kind === 'signals') {
+    badge.textContent = 'BUY'; badge.className = 'td-pill up';
+    nodes.push(el('div', 'kind', r.setup));
+    const big = el('div', 'td-big num', fmt(r.entry)); Object.assign(big.dataset, { source: 'signals', field: 'entry', where: w });
+    const head = el('div'); head.append(el('div', 'muted', 'Buy near'), big); nodes.push(head);
+    nodes.push(ladder(r.stop, r.entry, r.tp1, r.tp2, r.entry));
+    nodes.push(kv([
+      ["Don't chase above", 'signals', 'buy_max', w, fmt(r.buy_max)],
+      ['Cut loss', 'signals', 'stop', w, fmt(r.stop), 'down'],
+      ['Cut loss %', 'signals', 'stop_pct', w, '-' + fmt(r.stop_pct, 1), 'down'],
+      ['TP1 (sell half)', 'signals', 'tp1', w, fmt(r.tp1), 'up'],
+      ['TP2 (sell rest)', 'signals', 'tp2', w, fmt(r.tp2), 'up'],
+      ['TP2 %', 'signals', 'tp2_pct', w, '+' + fmt(r.tp2_pct, 1), 'up'],
+      ['Reward : risk', 'signals', 'rr', w, '1:' + fmt(r.rr, 1)],
+      ['Hold max (days)', 'signals', 'max_hold', w, String(r.max_hold)],
+    ]));
+    nodes.push(lotCalc(Number(r.risk_per_lot), Number(r.entry)));
+    const steps = el('ol', 'td-steps');
+    [`Buy next session near ${fmt(r.entry)}; skip if it opens above ${fmt(r.buy_max)}.`,
+     `Set cut loss at ${fmt(r.stop)} straight away.`,
+     `At ${fmt(r.tp1)}: sell half, move cut loss to ${fmt(r.entry)}.`,
+     `At ${fmt(r.tp2)}: sell the rest. Exit after ${r.max_hold} days if neither hits.`].forEach((t) => steps.append(el('li', '', t)));
+    nodes.push(steps);
+  } else if (kind === 'positions') {
+    badge.textContent = r.action; badge.className = 'td-pill ' + (ACTION_CLASS[r.action] || 'muted');
+    const pw = w + '&status=' + encodeURIComponent(r.status);
+    nodes.push(el('div', 'kind', `${r.setup} · opened ${r.opened}`));
+    const big = el('div', 'td-big num ' + sgn(r.pnl_pct), (r.pnl_pct > 0 ? '+' : '') + fmt(r.pnl_pct, 2) + '%'); Object.assign(big.dataset, { source: 'positions', field: 'pnl_pct', where: pw });
+    const head = el('div'); head.append(el('div', 'muted', r.status === 'open' ? 'Unrealised P/L' : 'Closed today'), big); nodes.push(head);
+    if (r.status === 'open') {
+      nodes.push(ladder(r.stop, r.entry, r.tp1, r.tp2, r.close));
+      nodes.push(kv([
+        ['Entry', 'positions', 'entry', pw, fmt(r.entry)],
+        ['Last close', 'positions', 'close', pw, fmt(r.close)],
+        ['Cut loss', 'positions', 'stop', pw, fmt(r.stop), 'down'],
+        ['TP1', 'positions', 'tp1', pw, fmt(r.tp1), 'up'],
+        ['TP2', 'positions', 'tp2', pw, fmt(r.tp2), 'up'],
+        ['Half sold at TP1', null, null, null, r.tp1_hit ? 'yes' : 'no'],
+        ['Day', 'positions', 'days_held', pw, `${r.days_held} of ${r.max_hold}`],
+      ]));
+    }
+    if (r.note) { const n = el('div', 'td-note', r.note); Object.assign(n.dataset, { source: 'positions', field: 'note', where: pw }); nodes.push(n); }
+  } else {
+    badge.textContent = 'WATCH'; badge.className = 'td-pill gold';
+    nodes.push(el('div', 'kind', `Swing setup · ${r.stage_name}`));
+    const big = el('div', 'td-big num', `Stage ${r.stage}/8`); Object.assign(big.dataset, { source: 'watchlist', field: 'stage', where: w });
+    nodes.push(big);
+    const prog = el('div'); prog.setAttribute('role', 'img'); prog.setAttribute('aria-label', `Stage ${r.stage} of 8`);
+    prog.style.cssText = 'display:grid;grid-template-columns:repeat(8,1fr);gap:3px';
+    for (let s = 1; s <= 8; s++) { const seg = el('span'); seg.style.cssText = `height:6px;border-radius:3px;background:${s <= r.stage ? 'var(--td-gold)' : 'var(--td-line)'}`; prog.append(seg); }
+    nodes.push(prog);
+    nodes.push(kv([
+      ['Close', 'watchlist', 'close', w, fmt(r.close)],
+      ['RSI 14', 'watchlist', 'rsi14', w, fmt(r.rsi14, 1)],
+      ['MA50', 'watchlist', 'ma50', w, fmt(r.ma50)],
+      ['MA200 (buy trigger)', 'watchlist', 'ma200', w, fmt(r.ma200), 'gold'],
+    ]));
+    const n = el('div', 'td-note', r.next_step); Object.assign(n.dataset, { source: 'watchlist', field: 'next_step', where: w }); nodes.push(n);
+  }
+  body.replaceChildren(...nodes);
+  const key = kind + '|' + r.ticker;
+  if (animate && TD.ticketFor !== key && !reduce) {
+    body.classList.remove('is-in'); void body.offsetWidth; body.classList.add('is-in');
+    const b = document.getElementById('t-burst'); b.classList.remove('go'); void b.offsetWidth; b.classList.add('go');
+  }
+  TD.ticketFor = key;
+}
+
+/* ---- chart ---- */
+document.querySelectorAll('[data-range]').forEach((b) => b.addEventListener('click', () => {
+  TD.range = Number(b.dataset.range);
+  document.querySelectorAll('[data-range]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
+  TD.drawnFor = null; drawChart();
+}));
+document.querySelectorAll('[data-layer]').forEach((b) => b.addEventListener('click', () => {
+  const k = b.dataset.layer; TD.layers[k] = !TD.layers[k]; b.setAttribute('aria-pressed', String(TD.layers[k])); drawChart();
+}));
+function levelsFor(cur) {
+  if (!cur || !TD.layers.levels) return [];
+  const { kind, r } = cur;
+  if (kind === 'signals') return [['Buy', r.entry, 'var(--td-fg)'], ['Cut loss', r.stop, 'var(--td-down)'], ['TP1', r.tp1, 'var(--td-up)'], ['TP2', r.tp2, 'var(--td-up)']];
+  if (kind === 'positions' && r.status === 'open') return [['Entry', r.entry, 'var(--td-fg)'], ['Cut loss', r.stop, 'var(--td-down)'], ['TP1', r.tp1, 'var(--td-up)'], ['TP2', r.tp2, 'var(--td-up)']];
+  if (kind === 'watchlist') return [['Trigger', r.ma200, 'var(--td-gold)']];
+  return [];
+}
+function drawChart() {
+  const box = document.getElementById('c-box');
+  const p = dash.data('prices');
+  const cur = current();
+  document.getElementById('c-ticker').textContent = TD.ticker || '—';
+  document.getElementById('c-setup').textContent = cur ? (cur.kind === 'watchlist' ? 'watchlist' : shortSetup(cur.r.setup)) : '';
+  if (p.status === 'error') { box.classList.remove('dash-skeleton'); box.replaceChildren(el('div', 'td-fail', 'Failed to load')); return; }
+  if (p.status !== 'ok') { box.classList.add('dash-skeleton'); box.replaceChildren(); return; }
+  box.classList.remove('dash-skeleton');
+  const all = p.data.filter((b) => b.ticker === TD.ticker);
+  const bars = all.slice(-TD.range).map((b) => ({ ...b, d: new Date(b.date) }));
+  const ohlc = document.getElementById('c-ohlc');
+  if (!bars.length) { box.replaceChildren(el('div', 'td-empty', TD.ticker ? 'No price history for this stock.' : 'Pick a stock to see its chart.')); ohlc.textContent = ''; return; }
+  bars.forEach((b, i) => { b.prev = i ? +bars[i - 1].close : (all.length > bars.length ? +all[all.length - bars.length - 1].close : null); });
+
+  const W = Math.max(280, box.clientWidth), H = 430;
+  const levels = levelsFor(cur).filter((l) => l[1] !== null && l[1] !== undefined);
+  const series = [...bars.map((b) => +b.low), ...bars.map((b) => +b.high), ...levels.map((l) => +l[1])];
+  if (TD.layers.ma50) bars.forEach((b) => { if (b.ma50 !== null) series.push(+b.ma50); });
+  if (TD.layers.ma200) bars.forEach((b) => { if (b.ma200 !== null) series.push(+b.ma200); });
+  const lo = d3.min(series), hi = d3.max(series);
+  const pad = (hi - lo) * 0.06 || hi * 0.02;
+  const priceH = 270, volTop = 288, volH = 44, rsiTop = 348, rsiH = 60;
+  const mono = 'ui-monospace, Consolas, monospace';
+
+  const svg = d3.create('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('role', 'img').attr('aria-label', `Daily candles for ${TD.ticker}`);
+  const probe = svg.append('text').attr('font-size', 11).attr('font-family', mono).text('Cut loss ' + d3.format('.3~f')(hi + pad));
+  document.getElementById('desk').append(svg.node());
+  const labW = probe.node().getComputedTextLength(); probe.remove(); svg.node().remove();
+  const m = { l: 6, r: Math.ceil(labW) + 14, t: 8 };
+
+  const x = d3.scaleBand(bars.map((b, i) => i), [m.l, W - m.r]).padding(0.25);
+  const y = d3.scaleLinear([lo - pad, hi + pad], [m.t + priceH, m.t]);
+  const yv = d3.scaleLinear([0, d3.max(bars, (b) => +b.volume) || 1], [volTop + volH, volTop]);
+  const yr = d3.scaleLinear([0, 100], [rsiTop + rsiH, rsiTop]);
+  const cx = (i) => x(i) + x.bandwidth() / 2;
+  const g = svg.append('g');
+
+  // where the plan tags will sit on the right edge (kept 15px apart), so axis labels can give way
+  const placed = [];
+  levels.sort((a, b) => b[1] - a[1]).forEach((l) => {
+    let ly = y(+l[1]); placed.forEach((p2) => { if (Math.abs(p2 - ly) < 15) ly = p2 + 15; }); placed.push(ly); l.push(ly);
+  });
+  y.ticks(5).forEach((t) => {
+    g.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', y(t)).attr('y2', y(t)).attr('stroke', 'var(--td-line)');
+    if (placed.some((ly) => Math.abs(ly - y(t)) < 14) || y(t) > m.t + priceH - 4) return;
+    g.append('text').attr('x', W - m.r + 6).attr('y', y(t) + 4).attr('fill', 'var(--td-muted)').attr('font-size', 11).attr('font-family', mono).text(d3.format('.3~f')(t));
+  });
+  let lastM = -1, lastX = -99;
+  bars.forEach((b, i) => {
+    const mo = b.d.getUTCMonth();
+    const label = TD.range <= 22 ? (i % 5 === 0 ? d3.utcFormat('%-d %b')(b.d) : null) : (mo !== lastM ? d3.utcFormat('%b')(b.d) : null);
+    lastM = mo;
+    if (label && x(i) - lastX > 38) { lastX = x(i); g.append('text').attr('x', x(i)).attr('y', H - 2).attr('fill', 'var(--td-muted)').attr('font-size', 11).text(label); }
+  });
+
+  const grow = TD.drawnFor !== TD.ticker + '|' + TD.range;
+  const vol = g.append('g').attr('class', 'td-candles' + (grow ? ' grow' : ''));
+  vol.selectAll('rect').data(bars).join('rect').attr('x', (b, i) => x(i)).attr('width', x.bandwidth())
+    .attr('y', (b) => yv(+b.volume)).attr('height', (b) => yv(0) - yv(+b.volume))
+    .attr('fill', (b) => +b.close >= +b.open ? 'var(--td-up)' : 'var(--td-down)').attr('opacity', 0.3)
+    .style('animation-delay', (b, i) => (i * 4) + 'ms');
+  const cg = g.append('g').attr('class', 'td-candles' + (grow ? ' grow' : ''));
+  const col = (b) => +b.close >= +b.open ? 'var(--td-up)' : 'var(--td-down)';
+  cg.selectAll('line').data(bars).join('line').attr('x1', (b, i) => cx(i)).attr('x2', (b, i) => cx(i))
+    .attr('y1', (b) => y(+b.high)).attr('y2', (b) => y(+b.low)).attr('stroke', col).style('animation-delay', (b, i) => (i * 4) + 'ms');
+  cg.selectAll('rect').data(bars).join('rect').attr('x', (b, i) => x(i)).attr('width', x.bandwidth()).attr('rx', Math.min(1.5, x.bandwidth() / 4))
+    .attr('y', (b) => y(Math.max(+b.open, +b.close))).attr('height', (b) => Math.max(1, Math.abs(y(+b.open) - y(+b.close))))
+    .attr('fill', col).style('animation-delay', (b, i) => (i * 4) + 'ms');
+
+  [['ma50', 'var(--td-ma50)'], ['ma200', 'var(--td-ma200)']].forEach(([k, c]) => {
+    if (!TD.layers[k]) return;
+    const line = d3.line().defined((b) => b[k] !== null).x((b, i) => cx(i)).y((b) => y(+b[k]));
+    g.append('path').datum(bars).attr('d', line).attr('fill', 'none').attr('stroke', c).attr('stroke-width', 1.5)
+      .attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round').attr('pathLength', 1).attr('class', grow ? 'td-draw' : null);
+  });
+
+  levels.forEach(([name, v, c, ly]) => {
+    const yy = y(+v);
+    g.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', yy).attr('y2', yy).attr('stroke', c).attr('stroke-dasharray', '4 3').attr('opacity', 0.9);
+    g.append('rect').attr('x', W - m.r + 2).attr('y', ly - 8).attr('width', m.r - 4).attr('height', 16).attr('rx', 3).attr('fill', '#0d131b').attr('stroke', c);
+    g.append('text').attr('x', W - m.r + 6).attr('y', ly + 4).attr('fill', c).attr('font-size', 10.5).attr('font-family', mono).text(`${name} ${d3.format('.3~f')(v)}`);
+  });
+
+  g.append('rect').attr('x', m.l).attr('width', W - m.r - m.l).attr('y', yr(70)).attr('height', yr(30) - yr(70)).attr('fill', 'var(--td-panel-2)');
+  [30, 50, 70].forEach((t) => {
+    g.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', yr(t)).attr('y2', yr(t)).attr('stroke', 'var(--td-line)').attr('stroke-dasharray', t === 50 ? '2 3' : null);
+    g.append('text').attr('x', W - m.r + 6).attr('y', yr(t) + 4).attr('fill', 'var(--td-muted)').attr('font-size', 10.5).attr('font-family', mono).text(t);
+  });
+  g.append('text').attr('x', m.l + 2).attr('y', rsiTop - 4).attr('fill', 'var(--td-muted)').attr('font-size', 10.5).text('RSI 14');
+  g.append('path').datum(bars).attr('d', d3.line().defined((b) => b.rsi14 !== null).x((b, i) => cx(i)).y((b) => yr(+b.rsi14)))
+    .attr('fill', 'none').attr('stroke', 'var(--td-gold)').attr('stroke-width', 1.5).attr('pathLength', 1).attr('class', grow ? 'td-draw' : null);
+
+  const last = bars[bars.length - 1];
+  const tagY = y(+last.close);
+  g.append('line').attr('x1', cx(bars.length - 1)).attr('x2', W - m.r).attr('y1', tagY).attr('y2', tagY).attr('stroke', col(last)).attr('opacity', .6);
+
+  const show = (b) => {
+    const chg = b.prev ? (b.close - b.prev) / b.prev * 100 : null;
+    ohlc.replaceChildren();
+    const add = (k, v, cls) => { const s = el('span', cls || ''); s.append(k ? k + ' ' : '', el('b', '', v)); ohlc.append(s); };
+    add('', d3.utcFormat('%a %-d %b')(b.d)); add('O', fmt(b.open)); add('H', fmt(b.high)); add('L', fmt(b.low)); add('C', fmt(b.close));
+    add('Vol', d3.format('.3~s')(b.volume)); add('RSI', fmt(b.rsi14, 1));
+    if (chg !== null) ohlc.append(el('span', sgn(chg), (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%'));
+  };
+  const cross = g.append('g').attr('opacity', 0);
+  const vline = cross.append('line').attr('y1', m.t).attr('y2', rsiTop + rsiH).attr('stroke', 'var(--td-muted)').attr('stroke-dasharray', '2 2');
+  const hline = cross.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('stroke', 'var(--td-muted)').attr('stroke-dasharray', '2 2');
+  const plab = cross.append('g');
+  const plabBg = plab.append('rect').attr('x', W - m.r + 2).attr('height', 16).attr('width', m.r - 4).attr('rx', 3).attr('fill', 'var(--td-fg)');
+  const plabTx = plab.append('text').attr('x', W - m.r + 6).attr('font-size', 10.5).attr('font-family', mono).attr('fill', 'var(--td-bg)');
+  cross.attr('display', 'none');
+  svg.append('rect').attr('x', m.l).attr('y', 0).attr('width', W - m.r - m.l).attr('height', H).attr('fill', 'transparent').style('cursor', 'crosshair')
+    .on('pointermove', (ev) => {
+      const [mx, my] = d3.pointer(ev);
+      const i = Math.max(0, Math.min(bars.length - 1, Math.round((mx - m.l - x.step() / 2) / x.step())));
+      cross.attr('display', null).attr('opacity', 1); vline.attr('x1', cx(i)).attr('x2', cx(i));
+      const yy = Math.max(m.t, Math.min(m.t + priceH, my));
+      hline.attr('y1', yy).attr('y2', yy); plabBg.attr('y', yy - 8); plabTx.attr('y', yy + 4).text(d3.format('.3f')(y.invert(yy)));
+      plab.attr('opacity', my <= m.t + priceH ? 1 : 0); hline.attr('opacity', my <= m.t + priceH ? 1 : 0);
+      show(bars[i]);
+    })
+    .on('pointerleave', () => { cross.attr('display', 'none'); show(last); });
+  show(last);
+  box.replaceChildren(svg.node());
+  TD.drawnFor = TD.ticker + '|' + TD.range;
+}
+
+/* ---- lower: history, equity, scoreboard ---- */
+function fillTable(id, cols, key) {
+  const table = document.querySelector(`table[data-source="${id}"]`);
+  const d = dash.data(id);
+  let rows = d.status === 'ok' ? d.data : [];
+  rows = TD.sort[id] ? sortRows(id, rows) : (id === 'history' ? [...rows].reverse() : rows);
+  const empty = table.parentElement.querySelector('.td-empty');
+  if (empty) empty.hidden = !(d.status === 'ok' && rows.length === 0);
+  table.querySelector('tbody').replaceChildren(...rows.map((r) => {
+    const tr = el('tr'); if (key) tr.dataset.key = key(r);
+    cols.forEach((c) => { const td = el('td'); c(td, r); tr.append(td); });
+    return tr;
+  }));
+}
+function drawEquity() {
+  const box = document.getElementById('eq-box');
+  if (box.hidden) return;
+  const e = dash.data('equity');
+  if (e.status === 'error') { box.classList.remove('dash-skeleton'); box.replaceChildren(el('div', 'td-fail', 'Failed to load')); return; }
+  if (e.status !== 'ok') { box.classList.add('dash-skeleton'); box.replaceChildren(); return; }
+  box.classList.remove('dash-skeleton');
+  const rows = e.data;
+  if (!rows.length) { box.replaceChildren(el('div', 'td-empty', 'The curve starts once trades close.')); return; }
+  const W = Math.max(280, box.clientWidth - 32), H = 220, m = { l: 8, r: 52, t: 12, b: 22 };
+  const pts = [{ i: -1, cumulative_pct: 0 }, ...rows.map((r, i) => ({ ...r, i }))];
+  const x = d3.scaleLinear([-1, rows.length - 1], [m.l, W - m.r]);
+  const ext = d3.extent([0, ...rows.map((r) => r.cumulative_pct)]);
+  const pad = (ext[1] - ext[0]) * 0.1 || 1;
+  const y = d3.scaleLinear([ext[0] - pad, ext[1] + pad], [H - m.b, m.t]);
+  const svg = d3.create('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('role', 'img').attr('aria-label', 'Running total of closed-trade returns');
+  const defs = svg.append('defs');
+  const endUp = rows[rows.length - 1].cumulative_pct >= 0;
+  const c = endUp ? '#22b28f' : '#f0565a';
+  const gr = defs.append('linearGradient').attr('id', 'td-eq-fill').attr('x1', 0).attr('x2', 0).attr('y1', 0).attr('y2', 1);
+  [[0, .26], [.25, .16], [.5, .08], [.75, .03], [1, 0]].forEach(([o, a]) => gr.append('stop').attr('offset', o).attr('style', `stop-color:${c};stop-opacity:${a}`));
+  y.ticks(4).forEach((t) => {
+    svg.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', y(t)).attr('y2', y(t)).attr('stroke', t === 0 ? 'var(--td-line-2)' : 'var(--td-line)');
+    svg.append('text').attr('x', W - m.r + 6).attr('y', y(t) + 4).attr('fill', 'var(--td-muted)').attr('font-size', 11).attr('font-family', 'ui-monospace, Consolas, monospace').text((t > 0 ? '+' : '') + t + '%');
+  });
+  svg.append('path').datum(pts).attr('d', d3.area().x((p) => x(p.i)).y0(y(Math.max(ext[0] - pad, Math.min(0, ext[1])))).y1((p) => y(p.cumulative_pct))).attr('fill', 'url(#td-eq-fill)');
+  svg.append('path').datum(pts).attr('d', d3.line().x((p) => x(p.i)).y((p) => y(p.cumulative_pct))).attr('fill', 'none').attr('stroke', c)
+    .attr('stroke-width', 2).attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round').attr('pathLength', 1).attr('class', 'td-draw');
+  svg.selectAll('.dot').data(rows).join('circle').attr('cx', (r, i) => x(i)).attr('cy', (r) => y(r.cumulative_pct)).attr('r', 2.5)
+    .attr('fill', (r) => r.return_pct >= 0 ? 'var(--td-up)' : 'var(--td-down)');
+  const lastR = rows[rows.length - 1];
+  svg.append('text').attr('x', x(rows.length - 1)).attr('y', y(lastR.cumulative_pct) - 8).attr('text-anchor', 'end').attr('fill', c).attr('font-size', 12)
+    .attr('font-family', 'ui-monospace, Consolas, monospace').text((lastR.cumulative_pct > 0 ? '+' : '') + lastR.cumulative_pct + '%');
+  const tip = el('div', 'td-tip'); tip.hidden = true;
+  svg.append('rect').attr('x', m.l).attr('y', 0).attr('width', W - m.r - m.l).attr('height', H).attr('fill', 'transparent')
+    .on('pointermove', (ev) => {
+      const [mx] = d3.pointer(ev);
+      const i = Math.max(0, Math.min(rows.length - 1, Math.round(x.invert(mx))));
+      const r = rows[i];
+      tip.hidden = false;
+      tip.replaceChildren(el('div', 'muted', `${r.closed} · ${r.ticker}`), el('div', sgn(r.return_pct), `Trade ${(r.return_pct > 0 ? '+' : '') + fmt(r.return_pct, 2)}%`), el('div', '', `Total ${(r.cumulative_pct > 0 ? '+' : '') + fmt(r.cumulative_pct, 2)}%`));
+      const px = x(i) / W * box.clientWidth;
+      tip.style.left = Math.min(box.clientWidth - 150, Math.max(8, px + 12)) + 'px';
+      tip.style.top = '12px';
+    })
+    .on('pointerleave', () => { tip.hidden = true; });
+  box.replaceChildren(svg.node(), tip);
+}
+function drawLower() {
+  fillTable('history', [
+    (td, r) => { td.textContent = r.ticker; td.className = 'txt'; },
+    (td, r) => { td.textContent = r.kind; td.className = 'txt'; },
+    (td, r) => { td.textContent = r.opened; },
+    (td, r) => { td.textContent = r.closed; },
+    (td, r) => { td.textContent = r.reason; td.className = 'txt'; },
+    (td, r) => { td.textContent = fmt(r.return_pct, 2); td.className = sgn(r.return_pct); },
+  ], (r) => r.id);
+  const strat = rowsOf('strategies');
+  const maxAbs = d3.max(strat, (s) => Math.abs(+s.avg_raw_pct)) || 1;
+  fillTable('strategies', [
+    (td, r) => { td.textContent = r.strategy; td.className = 'txt'; },
+    (td, r) => { td.textContent = r.source; td.className = 'txt'; },
+    (td, r) => { td.textContent = r.trades; },
+    (td, r) => { td.textContent = fmt(r.win_rate_net, 1); },
+    (td, r) => { td.textContent = fmt(r.avg_net_pct, 2); td.className = sgn(r.avg_net_pct); },
+    (td, r) => { td.className = 'txt'; const v = +r.avg_raw_pct; const b = el('span', 'td-bar');
+      b.style.width = Math.max(2, Math.abs(v) / maxAbs * 56) + 'px'; b.style.background = v >= 0 ? 'var(--td-up)' : 'var(--td-down)';
+      td.append(b, ' ', el('span', sgn(v), fmt(r.avg_raw_pct, 2))); },
+  ], (r) => encodeURIComponent(r.source) + ',' + encodeURIComponent(r.section));
+  drawEquity();
+}
+
+/* ---- boot ---- */
+let firstPick = true;
+dash.onData(() => {
+  const ready = ['signals', 'positions', 'watchlist'].every((id) => dash.data(id).status === 'ok');
+  if (firstPick && ready) {
+    firstPick = false;
+    const h = location.hash.slice(1);
+    if (['tab-history', 'tab-equity', 'tab-scoreboard'].includes(h)) setLower(h.slice(4));
+    const linked = h.startsWith('tab-') ? h.slice(4) : null;
+    const order = [linked, 'signals', 'positions', 'watchlist'].filter((t) => ['signals', 'positions', 'watchlist'].includes(t));
+    const tab = order.find((id) => rowsOf(id).length) || 'signals';
+    if (rowsOf(tab).length) { TD.ticker = rowsOf(tab)[0].ticker; TD.kind = tab; }
+    setTab(tab);
+  }
+  drawKpis(); drawTape(); drawLists(); drawTicket(false); drawChart(); drawLower();
+});
+</script>
+
+</div>
+</body>
+</html>
