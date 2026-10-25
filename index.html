@@ -134,6 +134,9 @@ body { padding-block: max(12px, env(safe-area-inset-top, 0px)) max(12px, env(saf
   display: flex; flex-wrap: wrap; gap: 4px 12px; }
 .td-ohlc b { color: var(--td-fg); font-weight: 400; }
 .td-chart-wrap { position: relative; min-height: 27rem; }
+.td-chart-wrap .zoomer { cursor: crosshair; touch-action: none; }
+.td-chart-wrap .zoomer:active { cursor: grabbing; }
+.td-hint { padding: 2px var(--cds-pad-md) 0; font-size: 11px; color: var(--td-muted); }
 .td-chart-wrap svg { display: block; }
 .td-ticker { font-family: var(--td-mono); font-size: var(--cds-font-size-heading); }
 
@@ -305,13 +308,16 @@ dash.onData(() => {
         <div class="td-tools" role="group" aria-label="Chart options">
           <button class="td-chip" data-range="22" aria-pressed="false">1M</button>
           <button class="td-chip" data-range="66" aria-pressed="false">3M</button>
-          <button class="td-chip" data-range="120" aria-pressed="true">6M</button>
+          <button class="td-chip" data-range="125" aria-pressed="true">6M</button>
+          <button class="td-chip" data-range="250" aria-pressed="false">1Y</button>
+          <button class="td-chip" data-range="0" aria-pressed="false">All</button>
           <button class="td-chip" data-layer="ma50" aria-pressed="true"><span class="sw" style="background: var(--td-ma50)"></span>MA50</button>
           <button class="td-chip" data-layer="ma200" aria-pressed="true"><span class="sw" style="background: var(--td-ma200)"></span>MA200</button>
           <button class="td-chip" data-layer="levels" aria-pressed="true"><span class="sw" style="background: var(--td-gold)"></span>Plan</button>
         </div>
       </div>
       <div class="td-ohlc" id="c-ohlc"></div>
+      <div class="td-hint">Scroll or pinch to zoom · drag to move back in time · double-click to reset</div>
       <div class="td-chart-wrap dash-skeleton" id="c-box" data-source="prices signals positions watchlist"></div>
     </section>
 
@@ -374,7 +380,7 @@ dash.calc('equity', {
 </script>
 
 <script>
-window.TD = { tab: 'signals', ltab: 'history', ticker: null, kind: null, q: '', range: 120,
+window.TD = { tab: 'signals', ltab: 'history', ticker: null, kind: null, q: '', range: 125, view: null,
   layers: { ma50: true, ma200: true, levels: true }, sort: {}, drawnFor: null, counted: false, ticketFor: null };
 const fmt = (v, d = 3) => (v === null || v === undefined || v === '' || isNaN(Number(v))) ? '—' : String(Number(Number(v).toFixed(d)));
 const sgn = (v) => Number(v) > 0 ? 'up' : Number(v) < 0 ? 'down' : '';
@@ -668,7 +674,7 @@ function drawTicket(animate) {
 document.querySelectorAll('[data-range]').forEach((b) => b.addEventListener('click', () => {
   TD.range = Number(b.dataset.range);
   document.querySelectorAll('[data-range]').forEach((x) => x.setAttribute('aria-pressed', String(x === b)));
-  TD.drawnFor = null; drawChart();
+  TD.view = null; drawChart();
 }));
 document.querySelectorAll('[data-layer]').forEach((b) => b.addEventListener('click', () => {
   const k = b.dataset.layer; TD.layers[k] = !TD.layers[k]; b.setAttribute('aria-pressed', String(TD.layers[k])); drawChart();
@@ -690,123 +696,176 @@ function drawChart() {
   if (p.status === 'error') { box.classList.remove('dash-skeleton'); box.replaceChildren(el('div', 'td-fail', 'Failed to load')); return; }
   if (p.status !== 'ok') { box.classList.add('dash-skeleton'); box.replaceChildren(); return; }
   box.classList.remove('dash-skeleton');
-  const all = p.data.filter((b) => b.ticker === TD.ticker);
-  const bars = all.slice(-TD.range).map((b) => ({ ...b, d: new Date(b.date) }));
+  const bars = p.data.filter((b) => b.ticker === TD.ticker).map((b) => ({ ...b, d: new Date(b.date) }));
   const ohlc = document.getElementById('c-ohlc');
   if (!bars.length) { box.replaceChildren(el('div', 'td-empty', TD.ticker ? 'No price history for this stock.' : 'Pick a stock to see its chart.')); ohlc.textContent = ''; return; }
-  bars.forEach((b, i) => { b.prev = i ? +bars[i - 1].close : (all.length > bars.length ? +all[all.length - bars.length - 1].close : null); });
+  bars.forEach((b, i) => { b.prev = i ? +bars[i - 1].close : null; });
+  const n = bars.length;
+  if (TD.drawnFor !== TD.ticker) TD.view = null;  // a new stock opens at the chosen range
 
   const W = Math.max(280, box.clientWidth), H = 430;
   const levels = levelsFor(cur).filter((l) => l[1] !== null && l[1] !== undefined);
-  const series = [...bars.map((b) => +b.low), ...bars.map((b) => +b.high), ...levels.map((l) => +l[1])];
-  if (TD.layers.ma50) bars.forEach((b) => { if (b.ma50 !== null) series.push(+b.ma50); });
-  if (TD.layers.ma200) bars.forEach((b) => { if (b.ma200 !== null) series.push(+b.ma200); });
-  const lo = d3.min(series), hi = d3.max(series);
-  const pad = (hi - lo) * 0.06 || hi * 0.02;
   const priceH = 270, volTop = 288, volH = 44, rsiTop = 348, rsiH = 60;
   const mono = 'ui-monospace, Consolas, monospace';
+  const col = (b) => +b.close >= +b.open ? 'var(--td-up)' : 'var(--td-down)';
 
-  const svg = d3.create('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('role', 'img').attr('aria-label', `Daily candles for ${cur ? cur.r.name || TD.ticker : TD.ticker}`);
-  const probe = svg.append('text').attr('font-size', 11).attr('font-family', mono).text('Cut loss ' + d3.format('.3~f')(hi + pad));
+  const svg = d3.create('svg').attr('width', '100%').attr('viewBox', `0 0 ${W} ${H}`).attr('role', 'img')
+    .attr('aria-label', `Daily candles for ${cur ? cur.r.name || TD.ticker : TD.ticker}`);
+  const allHi = d3.max(bars, (b) => +b.high), allLo = d3.min(bars, (b) => +b.low);
+  const probe = svg.append('text').attr('font-size', 11).attr('font-family', mono)
+    .text('Cut loss ' + d3.format('.3~f')(Math.max(allHi, ...levels.map((l) => +l[1]))));
   document.getElementById('desk').append(svg.node());
   const labW = probe.node().getComputedTextLength(); probe.remove(); svg.node().remove();
   const m = { l: 6, r: Math.ceil(labW) + 14, t: 8 };
+  const x0 = d3.scaleLinear([-0.5, n - 0.5], [m.l, W - m.r]);
 
-  const x = d3.scaleBand(bars.map((b, i) => i), [m.l, W - m.r]).padding(0.25);
-  const y = d3.scaleLinear([lo - pad, hi + pad], [m.t + priceH, m.t]);
-  const yv = d3.scaleLinear([0, d3.max(bars, (b) => +b.volume) || 1], [volTop + volH, volTop]);
-  const yr = d3.scaleLinear([0, 100], [rsiTop + rsiH, rsiTop]);
-  const cx = (i) => x(i) + x.bandwidth() / 2;
-  const g = svg.append('g');
+  svg.append('defs').append('clipPath').attr('id', 'td-clip').append('rect')
+    .attr('x', m.l).attr('y', 0).attr('width', W - m.r - m.l).attr('height', H);
+  const gGrid = svg.append('g'), gAxis = svg.append('g');
+  const plot = svg.append('g').attr('clip-path', 'url(#td-clip)');
+  const gVol = plot.append('g'), gCandle = plot.append('g'), gLines = plot.append('g'), gRsi = plot.append('g');
+  const gLevels = svg.append('g'), gCross = svg.append('g').attr('display', 'none');
+  const overlay = svg.append('rect').attr('class', 'zoomer').attr('x', m.l).attr('y', 0)
+    .attr('width', W - m.r - m.l).attr('height', H).attr('fill', 'transparent');
 
-  // where the plan tags will sit on the right edge (kept 15px apart), so axis labels can give way
-  const placed = [];
-  levels.sort((a, b) => b[1] - a[1]).forEach((l) => {
-    let ly = y(+l[1]); placed.forEach((p2) => { if (Math.abs(p2 - ly) < 15) ly = p2 + 15; }); placed.push(ly); l.push(ly);
-  });
-  y.ticks(5).forEach((t) => {
-    g.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', y(t)).attr('y2', y(t)).attr('stroke', 'var(--td-line)');
-    if (placed.some((ly) => Math.abs(ly - y(t)) < 14) || y(t) > m.t + priceH - 4) return;
-    g.append('text').attr('x', W - m.r + 6).attr('y', y(t) + 4).attr('fill', 'var(--td-muted)').attr('font-size', 11).attr('font-family', mono).text(d3.format('.3~f')(t));
-  });
-  let lastM = -1, lastX = -99;
-  bars.forEach((b, i) => {
-    const mo = b.d.getUTCMonth();
-    const label = TD.range <= 22 ? (i % 5 === 0 ? d3.utcFormat('%-d %b')(b.d) : null) : (mo !== lastM ? d3.utcFormat('%b')(b.d) : null);
-    lastM = mo;
-    if (label && x(i) - lastX > 38) { lastX = x(i); g.append('text').attr('x', x(i)).attr('y', H - 2).attr('fill', 'var(--td-muted)').attr('font-size', 11).text(label); }
-  });
+  // crosshair parts
+  const vline = gCross.append('line').attr('y1', m.t).attr('y2', rsiTop + rsiH).attr('stroke', 'var(--td-muted)').attr('stroke-dasharray', '2 2');
+  const hline = gCross.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('stroke', 'var(--td-muted)').attr('stroke-dasharray', '2 2');
+  const plab = gCross.append('g');
+  plab.append('rect').attr('x', W - m.r + 2).attr('height', 16).attr('width', m.r - 4).attr('rx', 3).attr('fill', 'var(--td-fg)');
+  const plabTx = plab.append('text').attr('x', W - m.r + 6).attr('font-size', 10.5).attr('font-family', mono).attr('fill', 'var(--td-bg)');
 
-  const grow = TD.drawnFor !== TD.ticker + '|' + TD.range;
-  const vol = g.append('g').attr('class', 'td-candles' + (grow ? ' grow' : ''));
-  vol.selectAll('rect').data(bars).join('rect').attr('x', (b, i) => x(i)).attr('width', x.bandwidth())
-    .attr('y', (b) => yv(+b.volume)).attr('height', (b) => yv(0) - yv(+b.volume))
-    .attr('fill', (b) => +b.close >= +b.open ? 'var(--td-up)' : 'var(--td-down)').attr('opacity', 0.3)
-    .style('animation-delay', (b, i) => (i * 4) + 'ms');
-  const cg = g.append('g').attr('class', 'td-candles' + (grow ? ' grow' : ''));
-  const col = (b) => +b.close >= +b.open ? 'var(--td-up)' : 'var(--td-down)';
-  cg.selectAll('line').data(bars).join('line').attr('x1', (b, i) => cx(i)).attr('x2', (b, i) => cx(i))
-    .attr('y1', (b) => y(+b.high)).attr('y2', (b) => y(+b.low)).attr('stroke', col).style('animation-delay', (b, i) => (i * 4) + 'ms');
-  cg.selectAll('rect').data(bars).join('rect').attr('x', (b, i) => x(i)).attr('width', x.bandwidth()).attr('rx', Math.min(1.5, x.bandwidth() / 4))
-    .attr('y', (b) => y(Math.max(+b.open, +b.close))).attr('height', (b) => Math.max(1, Math.abs(y(+b.open) - y(+b.close))))
-    .attr('fill', col).style('animation-delay', (b, i) => (i * 4) + 'ms');
-
-  [['ma50', 'var(--td-ma50)'], ['ma200', 'var(--td-ma200)']].forEach(([k, c]) => {
-    if (!TD.layers[k]) return;
-    const line = d3.line().defined((b) => b[k] !== null).x((b, i) => cx(i)).y((b) => y(+b[k]));
-    g.append('path').datum(bars).attr('d', line).attr('fill', 'none').attr('stroke', c).attr('stroke-width', 1.5)
-      .attr('stroke-linejoin', 'round').attr('stroke-linecap', 'round').attr('pathLength', 1).attr('class', grow ? 'td-draw' : null);
-  });
-
-  levels.forEach(([name, v, c, ly]) => {
-    const yy = y(+v);
-    g.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', yy).attr('y2', yy).attr('stroke', c).attr('stroke-dasharray', '4 3').attr('opacity', 0.9);
-    g.append('rect').attr('x', W - m.r + 2).attr('y', ly - 8).attr('width', m.r - 4).attr('height', 16).attr('rx', 3).attr('fill', '#0d131b').attr('stroke', c);
-    g.append('text').attr('x', W - m.r + 6).attr('y', ly + 4).attr('fill', c).attr('font-size', 10.5).attr('font-family', mono).text(`${name} ${d3.format('.3~f')(v)}`);
-  });
-
-  g.append('rect').attr('x', m.l).attr('width', W - m.r - m.l).attr('y', yr(70)).attr('height', yr(30) - yr(70)).attr('fill', 'var(--td-panel-2)');
-  [30, 50, 70].forEach((t) => {
-    g.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', yr(t)).attr('y2', yr(t)).attr('stroke', 'var(--td-line)').attr('stroke-dasharray', t === 50 ? '2 3' : null);
-    g.append('text').attr('x', W - m.r + 6).attr('y', yr(t) + 4).attr('fill', 'var(--td-muted)').attr('font-size', 10.5).attr('font-family', mono).text(t);
-  });
-  g.append('text').attr('x', m.l + 2).attr('y', rsiTop - 4).attr('fill', 'var(--td-muted)').attr('font-size', 10.5).text('RSI 14');
-  g.append('path').datum(bars).attr('d', d3.line().defined((b) => b.rsi14 !== null).x((b, i) => cx(i)).y((b) => yr(+b.rsi14)))
-    .attr('fill', 'none').attr('stroke', 'var(--td-gold)').attr('stroke-width', 1.5).attr('pathLength', 1).attr('class', grow ? 'td-draw' : null);
-
-  const last = bars[bars.length - 1];
-  const tagY = y(+last.close);
-  g.append('line').attr('x1', cx(bars.length - 1)).attr('x2', W - m.r).attr('y1', tagY).attr('y2', tagY).attr('stroke', col(last)).attr('opacity', .6);
-
+  let view = null;  // {xs, y, i0, i1} of the last render
   const show = (b) => {
     const chg = b.prev ? (b.close - b.prev) / b.prev * 100 : null;
     ohlc.replaceChildren();
-    const add = (k, v, cls) => { const s = el('span', cls || ''); s.append(k ? k + ' ' : '', el('b', '', v)); ohlc.append(s); };
-    add('', d3.utcFormat('%a %-d %b')(b.d)); add('O', fmt(b.open)); add('H', fmt(b.high)); add('L', fmt(b.low)); add('C', fmt(b.close));
+    const add = (k, v) => { const s2 = el('span'); s2.append(k ? k + ' ' : '', el('b', '', v)); ohlc.append(s2); };
+    add('', d3.utcFormat('%a %-d %b %Y')(b.d)); add('O', fmt(b.open)); add('H', fmt(b.high)); add('L', fmt(b.low)); add('C', fmt(b.close));
     add('Vol', d3.format('.3~s')(b.volume)); add('RSI', fmt(b.rsi14, 1));
     if (chg !== null) ohlc.append(el('span', sgn(chg), (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%'));
   };
-  const cross = g.append('g').attr('opacity', 0);
-  const vline = cross.append('line').attr('y1', m.t).attr('y2', rsiTop + rsiH).attr('stroke', 'var(--td-muted)').attr('stroke-dasharray', '2 2');
-  const hline = cross.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('stroke', 'var(--td-muted)').attr('stroke-dasharray', '2 2');
-  const plab = cross.append('g');
-  const plabBg = plab.append('rect').attr('x', W - m.r + 2).attr('height', 16).attr('width', m.r - 4).attr('rx', 3).attr('fill', 'var(--td-fg)');
-  const plabTx = plab.append('text').attr('x', W - m.r + 6).attr('font-size', 10.5).attr('font-family', mono).attr('fill', 'var(--td-bg)');
-  cross.attr('display', 'none');
-  svg.append('rect').attr('x', m.l).attr('y', 0).attr('width', W - m.r - m.l).attr('height', H).attr('fill', 'transparent').style('cursor', 'crosshair')
-    .on('pointermove', (ev) => {
-      const [mx, my] = d3.pointer(ev);
-      const i = Math.max(0, Math.min(bars.length - 1, Math.round((mx - m.l - x.step() / 2) / x.step())));
-      cross.attr('display', null).attr('opacity', 1); vline.attr('x1', cx(i)).attr('x2', cx(i));
-      const yy = Math.max(m.t, Math.min(m.t + priceH, my));
-      hline.attr('y1', yy).attr('y2', yy); plabBg.attr('y', yy - 8); plabTx.attr('y', yy + 4).text(d3.format('.3f')(y.invert(yy)));
-      plab.attr('opacity', my <= m.t + priceH ? 1 : 0); hline.attr('opacity', my <= m.t + priceH ? 1 : 0);
-      show(bars[i]);
-    })
-    .on('pointerleave', () => { cross.attr('display', 'none'); show(last); });
-  show(last);
+
+  function render(t) {
+    const xs = t.rescaleX(x0);
+    const [a, b] = xs.domain();
+    const i0 = Math.max(0, Math.ceil(a - 0.5)), i1 = Math.min(n - 1, Math.floor(b + 0.5));
+    const vis = bars.slice(i0, i1 + 1);
+    const step = xs(1) - xs(0), bw = Math.max(1, step * 0.7);
+
+    // price scale fits what is on screen (plus the plan levels and visible moving averages)
+    const vals = [...vis.map((v) => +v.low), ...vis.map((v) => +v.high), ...levels.map((l) => +l[1])];
+    ['ma50', 'ma200'].forEach((k) => { if (TD.layers[k]) vis.forEach((v) => { if (v[k] !== null) vals.push(+v[k]); }); });
+    const lo = d3.min(vals), hi = d3.max(vals), pad = (hi - lo) * 0.06 || hi * 0.02;
+    const y = d3.scaleLinear([lo - pad, hi + pad], [m.t + priceH, m.t]);
+    const yv = d3.scaleLinear([0, d3.max(vis, (v) => +v.volume) || 1], [volTop + volH, volTop]);
+    const yr = d3.scaleLinear([0, 100], [rsiTop + rsiH, rsiTop]);
+    view = { xs, y, i0, i1 };
+
+    // plan tags on the right edge (kept apart); axis labels give way to them
+    const placed = [];
+    const tags = levels.slice().sort((p1, p2) => p2[1] - p1[1]).map((l) => {
+      let ly = y(+l[1]); placed.forEach((q) => { if (Math.abs(q - ly) < 15) ly = q + 15; }); placed.push(ly); return [...l, ly];
+    });
+    gGrid.selectAll('*').remove(); gAxis.selectAll('*').remove();
+    y.ticks(5).forEach((tk) => {
+      gGrid.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', y(tk)).attr('y2', y(tk)).attr('stroke', 'var(--td-line)');
+      if (placed.some((ly) => Math.abs(ly - y(tk)) < 14) || y(tk) > m.t + priceH - 4) return;
+      gAxis.append('text').attr('x', W - m.r + 6).attr('y', y(tk) + 4).attr('fill', 'var(--td-muted)').attr('font-size', 11).attr('font-family', mono).text(d3.format('.3~f')(tk));
+    });
+    // time labels: days when zoomed in, months, or years when zoomed far out
+    const span = i1 - i0 + 1;
+    const fmtT = span <= 45 ? d3.utcFormat('%-d %b') : span <= 300 ? d3.utcFormat('%b') : d3.utcFormat("%b '%y");
+    let lastKey = null, lastX = -99;
+    vis.forEach((v, k) => {
+      const i = i0 + k;
+      const key = span <= 45 ? Math.floor(i / 5) : span <= 300 ? v.d.getUTCMonth() : Math.floor(v.d.getUTCMonth() / 3) + v.d.getUTCFullYear() * 4;
+      if (key !== lastKey && xs(i) - lastX > 44 && xs(i) > m.l + 2) {
+        lastX = xs(i);
+        gAxis.append('text').attr('x', xs(i)).attr('y', H - 2).attr('fill', 'var(--td-muted)').attr('font-size', 11).text(fmtT(v.d));
+      }
+      lastKey = key;
+    });
+
+    gVol.selectAll('rect').data(vis, (v) => v.date).join('rect')
+      .attr('x', (v, k) => xs(i0 + k) - bw / 2).attr('width', bw)
+      .attr('y', (v) => yv(+v.volume)).attr('height', (v) => yv(0) - yv(+v.volume))
+      .attr('fill', col).attr('opacity', 0.3);
+    gCandle.selectAll('line').data(vis, (v) => v.date).join('line')
+      .attr('x1', (v, k) => xs(i0 + k)).attr('x2', (v, k) => xs(i0 + k))
+      .attr('y1', (v) => y(+v.high)).attr('y2', (v) => y(+v.low)).attr('stroke', col);
+    gCandle.selectAll('rect').data(vis, (v) => v.date).join('rect')
+      .attr('x', (v, k) => xs(i0 + k) - bw / 2).attr('width', bw).attr('rx', Math.min(1.5, bw / 4))
+      .attr('y', (v) => y(Math.max(+v.open, +v.close))).attr('height', (v) => Math.max(1, Math.abs(y(+v.open) - y(+v.close))))
+      .attr('fill', col);
+
+    gLines.selectAll('*').remove();
+    const edge = bars.slice(Math.max(0, i0 - 1), Math.min(n, i1 + 2));  // one bar past each side so lines reach the edges
+    const off = Math.max(0, i0 - 1);
+    [['ma50', 'var(--td-ma50)'], ['ma200', 'var(--td-ma200)']].forEach(([k, c]) => {
+      if (!TD.layers[k]) return;
+      gLines.append('path').datum(edge).attr('fill', 'none').attr('stroke', c).attr('stroke-width', 1.5).attr('stroke-linejoin', 'round')
+        .attr('d', d3.line().defined((v) => v[k] !== null).x((v, k2) => xs(off + k2)).y((v) => y(+v[k])));
+    });
+    const last = bars[n - 1];
+    if (i1 === n - 1) gLines.append('line').attr('x1', xs(n - 1)).attr('x2', W - m.r).attr('y1', y(+last.close)).attr('y2', y(+last.close)).attr('stroke', col(last)).attr('opacity', .6);
+
+    gRsi.selectAll('*').remove();
+    gRsi.append('rect').attr('x', m.l).attr('width', W - m.r - m.l).attr('y', yr(70)).attr('height', yr(30) - yr(70)).attr('fill', 'var(--td-panel-2)');
+    [30, 50, 70].forEach((tk) => {
+      gRsi.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', yr(tk)).attr('y2', yr(tk)).attr('stroke', 'var(--td-line)').attr('stroke-dasharray', tk === 50 ? '2 3' : null);
+      gAxis.append('text').attr('x', W - m.r + 6).attr('y', yr(tk) + 4).attr('fill', 'var(--td-muted)').attr('font-size', 10.5).attr('font-family', mono).text(tk);
+    });
+    gAxis.append('text').attr('x', m.l + 2).attr('y', rsiTop - 4).attr('fill', 'var(--td-muted)').attr('font-size', 10.5).text('RSI 14');
+    gRsi.append('path').datum(edge).attr('fill', 'none').attr('stroke', 'var(--td-gold)').attr('stroke-width', 1.5)
+      .attr('d', d3.line().defined((v) => v.rsi14 !== null).x((v, k2) => xs(off + k2)).y((v) => yr(+v.rsi14)));
+
+    gLevels.selectAll('*').remove();
+    tags.forEach(([name, v, c, ly]) => {
+      const yy = y(+v);
+      gLevels.append('line').attr('x1', m.l).attr('x2', W - m.r).attr('y1', yy).attr('y2', yy).attr('stroke', c).attr('stroke-dasharray', '4 3').attr('opacity', 0.9);
+      gLevels.append('rect').attr('x', W - m.r + 2).attr('y', ly - 8).attr('width', m.r - 4).attr('height', 16).attr('rx', 3).attr('fill', '#0d131b').attr('stroke', c);
+      gLevels.append('text').attr('x', W - m.r + 6).attr('y', ly + 4).attr('fill', c).attr('font-size', 10.5).attr('font-family', mono).text(`${name} ${d3.format('.3~f')(v)}`);
+    });
+  }
+
+  // zoom: wheel / pinch around the pointer, drag to pan; x only
+  const right = W - m.r;
+  // the view is kept as a range of bars (not pixels), so it survives a resize
+  const fitLast = (count) => (!count || count >= n) ? [-0.5, n - 0.5] : [n - 0.5 - count, n - 0.5];
+  const toTransform = ([a, b]) => {
+    const k = Math.max(1, (n) / Math.max(1e-6, b - a));
+    return d3.zoomIdentity.translate(m.l - k * x0(a), 0).scale(k);
+  };
+  const zoom = d3.zoom()
+    .scaleExtent([1, Math.max(1, n / 10)])
+    .extent([[m.l, 0], [right, H]])
+    .translateExtent([[m.l, 0], [right, H]])
+    .on('zoom', (e) => { TD.view = e.transform.rescaleX(x0).domain(); render(e.transform); if (e.sourceEvent) pointer(e.sourceEvent); });
+  overlay.call(zoom).on('dblclick.zoom', null)
+    .on('dblclick', () => { overlay.transition().duration(reduce ? 0 : 300).call(zoom.transform, toTransform(fitLast(TD.range))); });
+
+  function pointer(ev) {
+    if (!view || !ev || ev.type === 'wheel' && !ev.clientX) return;
+    const pt = ev.touches && ev.touches.length ? ev.touches[0] : ev;
+    const [mx, my] = d3.pointer(pt, svg.node());
+    if (mx < m.l || mx > right) return;
+    const i = Math.max(view.i0, Math.min(view.i1, Math.round(view.xs.invert(mx))));
+    gCross.attr('display', null);
+    vline.attr('x1', view.xs(i)).attr('x2', view.xs(i));
+    const inPrice = my <= m.t + priceH;
+    const yy = Math.max(m.t, Math.min(m.t + priceH, my));
+    hline.attr('y1', yy).attr('y2', yy).attr('opacity', inPrice ? 1 : 0);
+    plab.attr('opacity', inPrice ? 1 : 0).select('rect').attr('y', yy - 8);
+    plabTx.attr('y', yy + 4).text(d3.format('.3f')(view.y.invert(yy)));
+    show(bars[i]);
+  }
+  overlay.on('pointermove', pointer)
+    .on('pointerleave', () => { gCross.attr('display', 'none'); show(bars[n - 1]); });
+
+  overlay.call(zoom.transform, toTransform(TD.view || fitLast(TD.range)));
+  show(bars[n - 1]);
   box.replaceChildren(svg.node());
-  TD.drawnFor = TD.ticker + '|' + TD.range;
+  TD.drawnFor = TD.ticker;
 }
 
 /* ---- lower: history, equity, scoreboard ---- */
