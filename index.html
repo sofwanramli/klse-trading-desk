@@ -56,6 +56,11 @@ body { padding-block: max(12px, env(safe-area-inset-top, 0px)) max(12px, env(saf
 .td-live { display: inline-flex; align-items: center; gap: 6px; font-size: var(--cds-font-size-caption); color: var(--td-muted);
   border: 1px solid var(--td-line); border-radius: 999px; padding: 2px 10px; }
 .td-live::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: var(--td-up); }
+.td-live.is-closed::before { background: var(--td-muted); }
+.td-live.is-error::before { background: var(--td-down); }
+.td-live[hidden] { display: none; }
+.td-livebar { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: var(--cds-font-size-caption); color: var(--td-muted); }
+.td-livebar b { font-family: var(--td-mono); font-size: var(--cds-font-size-body); color: var(--td-fg); font-weight: 500; }
 
 /* ticker tape */
 .td-tape-run { position: relative; overflow: hidden; border-block: 1px solid var(--td-line); background: var(--td-panel-2);
@@ -253,6 +258,7 @@ dash.onData(() => {
   <div class="td-top">
     <h1 class="td-brand">KLSE Trading Desk</h1>
     <span class="td-live">Close of&nbsp;<span class="num" data-source="run" data-field="run_date" data-row="0">—</span></span>
+    <span class="td-live" id="live-status" hidden></span>
     <span class="td-sub">Signals are for the next session · updated <span class="num" id="updated-at">—</span> · press <span class="num">/</span> to search</span>
   </div>
 
@@ -295,7 +301,7 @@ dash.onData(() => {
       </div>
       <div class="td-list" data-list="watchlist" hidden>
         <table data-source="watchlist" data-row-key="ticker">
-          <thead><tr><th data-field="name"><button>Stock</button></th><th data-field="stage"><button>Stage</button></th><th data-field="close"><button>Close</button></th><th data-field="rsi14"><button>RSI</button></th></tr></thead>
+          <thead><tr><th data-field="name"><button>Stock</button></th><th data-field="stage"><button>Stage</button></th><th data-field="close"><button>Price</button></th><th data-field="rsi14"><button>RSI</button></th></tr></thead>
           <tbody></tbody>
         </table>
         <div class="td-empty" hidden>Nothing on the watchlist.</div>
@@ -387,9 +393,85 @@ const sgn = (v) => Number(v) > 0 ? 'up' : Number(v) < 0 ? 'down' : '';
 const shortSetup = (s) => String(s || '').replace(/ — .*/, '').replace(/\(.*\)/, '').trim();
 const ACTION_CLASS = { SELL: 'down', TP1: 'up', HOLD: 'muted', NEW: 'gold' };
 const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-const rowsOf = (id) => { const d = dash.data(id); return d.status === 'ok' ? d.data : []; };
+const rowsOf = (id) => { const d = dash.data(id); return d.status !== 'ok' ? [] : LIVE_KINDS.includes(id) ? d.data.map(withLive) : d.data; };
 const nameCell = (td, r) => { const w = el('span', 'td-nm'); w.append(el('b', '', r.name || r.ticker), el('small', '', String(r.ticker).replace('.KL', ''))); td.replaceChildren(w); if (r.company) td.title = r.company; };
 const el = (tag, cls, text) => { const e = document.createElement(tag); if (cls) e.className = cls; if (text !== undefined) e.textContent = text; return e; };
+
+/* ---- live prices ----
+   During Bursa hours the page asks the klse-live-quotes Cloudflare Worker
+   (live_quotes/worker.js, a proxy to Yahoo, ~15 min delayed) every minute
+   and lays the quotes over the daily-close rows. Where the Worker can't be
+   reached the page stays on the daily close. */
+const LIVE_URL = 'https://klse-live-quotes.sofwanramli72.workers.dev/';
+const LIVE_KINDS = ['signals', 'positions', 'watchlist'];
+const LIVE_EVERY_MS = 60000;
+window.LIVE = { quotes: {}, status: 'off', at: null, started: false };
+const timeMYT = (iso) => new Date(iso).toLocaleTimeString('en-MY', { timeZone: 'Asia/Kuala_Lumpur', hour: 'numeric', minute: '2-digit' });
+function bursaOpen(now = new Date()) {
+  const myt = new Date(now.getTime() + 8 * 3600e3);
+  const day = myt.getUTCDay(), mins = myt.getUTCHours() * 60 + myt.getUTCMinutes();
+  return day >= 1 && day <= 5 && mins >= 8 * 60 + 45 && mins <= 17 * 60 + 15;
+}
+function withLive(r) {
+  const q = LIVE.quotes[r.ticker];
+  if (!q || r.status === 'closed') return r;
+  const o = { ...r, live: q };
+  if (r.status === 'open' && r.entry) {
+    o.close = q.price;
+    o.pnl_pct = Math.round((q.price / r.entry - 1) * 10000) / 100;
+    // what the daily rules would say if the day closed here
+    o.hit = q.price <= r.stop ? 'CUT' : q.price >= r.tp2 ? 'TP2' : q.price >= r.tp1 && !r.tp1_hit ? 'TP1' : null;
+  }
+  if (r.stage !== undefined) o.close = q.price;
+  return o;
+}
+async function pollLive() {
+  const tickers = [...new Set(LIVE_KINDS.flatMap((id) => {
+    const d = dash.data(id); return d.status === 'ok' ? d.data.filter((r) => r.status !== 'closed').map((r) => r.ticker) : [];
+  }))].sort();
+  if (!tickers.length) return;
+  try {
+    const resp = await fetch(LIVE_URL + '?s=' + tickers.join(','));
+    if (!resp.ok) throw new Error(resp.status);
+    const rows = await resp.json();
+    LIVE.quotes = Object.fromEntries(rows.map((q) => [q.ticker, q]));
+    LIVE.status = 'ok'; LIVE.at = new Date();
+  } catch (e) {
+    LIVE.status = 'error';
+  }
+  drawLive();
+}
+function drawLiveStatus() {
+  const n = document.getElementById('live-status');
+  const times = Object.values(LIVE.quotes).map((q) => q.time).filter(Boolean).sort();
+  n.hidden = LIVE.status === 'off';
+  n.classList.toggle('is-error', LIVE.status === 'error');
+  n.classList.toggle('is-closed', LIVE.status === 'ok' && !bursaOpen());
+  if (LIVE.status === 'error') n.textContent = 'Live prices unavailable';
+  else if (LIVE.status === 'ok') n.textContent = (bursaOpen() ? 'Live · ' : 'Last trade · ') + (times.length ? timeMYT(times[times.length - 1]) : '—') + ' · ~15 min delay';
+}
+function liveLine(r) {
+  const q = r.live;
+  if (!q) return null;
+  const line = el('div', 'td-livebar');
+  line.append(el('span', '', bursaOpen() ? 'Live' : 'Last'), el('b', '', fmt(q.price)));
+  if (q.chg_pct !== null) line.append(el('span', sgn(q.chg_pct), (q.chg_pct > 0 ? '▲ +' : q.chg_pct < 0 ? '▼ ' : '') + fmt(q.chg_pct, 2) + '%' + (bursaOpen() ? ' today' : '')));
+  if (q.time) line.append(el('span', '', (bursaOpen() ? '' : d3.utcFormat('%-d %b ')(new Date(q.date))) + timeMYT(q.time) + ' · ~15 min delay'));
+  return line;
+}
+// redraw what live prices touch; leave the ticket alone while someone types in it
+function drawLive() {
+  drawLiveStatus(); drawTape(); drawLists();
+  if (!(document.activeElement && document.activeElement.closest('#t-body'))) drawTicket(false);
+  drawChart();
+}
+function startLive() {
+  if (LIVE.started) return;
+  LIVE.started = true;
+  pollLive();  // once now, even after hours, for the latest price
+  setInterval(() => { if (bursaOpen() && !document.hidden) pollLive(); }, LIVE_EVERY_MS);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden && bursaOpen() && Date.now() - (LIVE.at || 0) > LIVE_EVERY_MS) pollLive(); });
+}
 
 /* ---- count-up numbers ---- */
 function countTo(node, target, decimals, signed) {
@@ -507,10 +589,12 @@ const runDate = () => (rowsOf('run')[0] || {}).run_date;
 const LIST_COLS = {
   signals: [nameCell, (td, r) => { td.textContent = fmt(r.entry); },
             (td, r) => { td.textContent = fmt(r.stop_pct, 1); td.className = 'down'; }, (td, r) => { td.textContent = fmt(r.rr, 1); }],
-  positions: [nameCell, (td, r) => { td.textContent = r.action; td.className = ACTION_CLASS[r.action] || ''; },
+  positions: [nameCell, (td, r) => {
+                if (r.hit) { td.textContent = r.hit + ' now'; td.className = r.hit === 'CUT' ? 'down' : 'up'; td.title = 'Live price is at this level; the daily rule decides on the close'; return; }
+                td.textContent = r.action; td.className = ACTION_CLASS[r.action] || ''; },
               (td, r) => { td.textContent = fmt(r.pnl_pct, 2); td.className = sgn(r.pnl_pct); }, (td, r) => { td.textContent = r.days_held === null ? '—' : r.days_held; }],
   watchlist: [nameCell, (td, r) => { td.textContent = r.stage; td.className = Number(r.stage) >= 7 ? 'gold' : ''; },
-              (td, r) => { td.textContent = fmt(r.close); }, (td, r) => { td.textContent = fmt(r.rsi14, 1); }],
+              (td, r) => { td.textContent = fmt(r.close); if (r.live) td.className = sgn(r.live.chg_pct); }, (td, r) => { td.textContent = fmt(r.rsi14, 1); }],
 };
 const isNew = { signals: (r) => r.date === runDate(), positions: (r) => r.action === 'NEW', watchlist: (r) => r.changed_today };
 const isAlert = { signals: () => false, positions: (r) => r.action === 'SELL' || r.action === 'TP1', watchlist: () => false };
@@ -607,7 +691,8 @@ function drawTicket(animate) {
     nodes.push(el('div', 'kind', [r.company, r.setup].filter(Boolean).join(' · ')));
     const big = el('div', 'td-big num', fmt(r.entry)); Object.assign(big.dataset, { source: 'signals', field: 'entry', where: w });
     const head = el('div'); head.append(el('div', 'muted', 'Buy near'), big); nodes.push(head);
-    nodes.push(ladder(r.stop, r.entry, r.tp1, r.tp2, r.entry));
+    if (r.live) nodes.push(liveLine(r));
+    nodes.push(ladder(r.stop, r.entry, r.tp1, r.tp2, r.live ? r.live.price : r.entry));
     nodes.push(kv([
       ["Don't chase above", 'signals', 'buy_max', w, fmt(r.buy_max)],
       ['Cut loss', 'signals', 'stop', w, fmt(r.stop), 'down'],
@@ -626,16 +711,18 @@ function drawTicket(animate) {
      `At ${fmt(r.tp2)}: sell the rest. Exit after ${r.max_hold} days if neither hits.`].forEach((t) => steps.append(el('li', '', t)));
     nodes.push(steps);
   } else if (kind === 'positions') {
-    badge.textContent = r.action; badge.className = 'td-pill ' + (ACTION_CLASS[r.action] || 'muted');
+    badge.textContent = r.hit ? r.hit + ' now' : r.action;
+    badge.className = 'td-pill ' + (r.hit ? (r.hit === 'CUT' ? 'down' : 'up') : ACTION_CLASS[r.action] || 'muted');
     const pw = w + '&status=' + encodeURIComponent(r.status);
     nodes.push(el('div', 'kind', [r.company, r.setup, 'opened ' + r.opened].filter(Boolean).join(' · ')));
     const big = el('div', 'td-big num ' + sgn(r.pnl_pct), (r.pnl_pct > 0 ? '+' : '') + fmt(r.pnl_pct, 2) + '%'); Object.assign(big.dataset, { source: 'positions', field: 'pnl_pct', where: pw });
     const head = el('div'); head.append(el('div', 'muted', r.status === 'open' ? 'Unrealised P/L' : 'Closed today'), big); nodes.push(head);
+    if (r.live) nodes.push(liveLine(r));
     if (r.status === 'open') {
       nodes.push(ladder(r.stop, r.entry, r.tp1, r.tp2, r.close));
       nodes.push(kv([
         ['Entry', 'positions', 'entry', pw, fmt(r.entry)],
-        ['Last close', 'positions', 'close', pw, fmt(r.close)],
+        [r.live ? 'Price now' : 'Last close', 'positions', 'close', pw, fmt(r.close)],
         ['Cut loss', 'positions', 'stop', pw, fmt(r.stop), 'down'],
         ['TP1', 'positions', 'tp1', pw, fmt(r.tp1), 'up'],
         ['TP2', 'positions', 'tp2', pw, fmt(r.tp2), 'up'],
@@ -649,12 +736,13 @@ function drawTicket(animate) {
     nodes.push(el('div', 'kind', [r.company, 'Swing setup · ' + r.stage_name].filter(Boolean).join(' · ')));
     const big = el('div', 'td-big num', `Stage ${r.stage}/8`); Object.assign(big.dataset, { source: 'watchlist', field: 'stage', where: w });
     nodes.push(big);
+    if (r.live) nodes.push(liveLine(r));
     const prog = el('div'); prog.setAttribute('role', 'img'); prog.setAttribute('aria-label', `Stage ${r.stage} of 8`);
     prog.style.cssText = 'display:grid;grid-template-columns:repeat(8,1fr);gap:3px';
     for (let s = 1; s <= 8; s++) { const seg = el('span'); seg.style.cssText = `height:6px;border-radius:3px;background:${s <= r.stage ? 'var(--td-gold)' : 'var(--td-line)'}`; prog.append(seg); }
     nodes.push(prog);
     nodes.push(kv([
-      ['Close', 'watchlist', 'close', w, fmt(r.close)],
+      [r.live ? 'Price now' : 'Close', 'watchlist', 'close', w, fmt(r.close)],
       ['RSI 14', 'watchlist', 'rsi14', w, fmt(r.rsi14, 1)],
       ['MA50', 'watchlist', 'ma50', w, fmt(r.ma50)],
       ['MA200 (buy trigger)', 'watchlist', 'ma200', w, fmt(r.ma200), 'gold'],
@@ -696,7 +784,16 @@ function drawChart() {
   if (p.status === 'error') { box.classList.remove('dash-skeleton'); box.replaceChildren(el('div', 'td-fail', 'Failed to load')); return; }
   if (p.status !== 'ok') { box.classList.add('dash-skeleton'); box.replaceChildren(); return; }
   box.classList.remove('dash-skeleton');
-  const bars = p.data.filter((b) => b.ticker === TD.ticker).map((b) => ({ ...b, d: new Date(b.date) }));
+  // Yahoo sometimes leaves the newest daily bar empty; skip bars with no close
+  const bars = p.data.filter((b) => b.ticker === TD.ticker && b.close !== null).map((b) => ({ ...b, d: new Date(b.date) }));
+  // today's live candle: replaces a bar for the same day, or is added after the last close
+  const lq = LIVE.quotes[TD.ticker];
+  if (lq && lq.date && bars.length) {
+    const last = bars[bars.length - 1];
+    const live = { open: lq.open ?? lq.price, high: lq.high ?? lq.price, low: lq.low ?? lq.price, close: lq.price, volume: lq.volume ?? 0, live: true };
+    if (last.date === lq.date) Object.assign(last, live);
+    else if (lq.date > last.date) bars.push({ ticker: TD.ticker, date: lq.date, d: new Date(lq.date), ma50: null, ma200: null, rsi14: null, ...live });
+  }
   const ohlc = document.getElementById('c-ohlc');
   if (!bars.length) { box.replaceChildren(el('div', 'td-empty', TD.ticker ? 'No price history for this stock.' : 'Pick a stock to see its chart.')); ohlc.textContent = ''; return; }
   bars.forEach((b, i) => { b.prev = i ? +bars[i - 1].close : null; });
@@ -743,6 +840,7 @@ function drawChart() {
     add('', d3.utcFormat('%a %-d %b %Y')(b.d)); add('O', fmt(b.open)); add('H', fmt(b.high)); add('L', fmt(b.low)); add('C', fmt(b.close));
     add('Vol', d3.format('.3~s')(b.volume)); add('RSI', fmt(b.rsi14, 1));
     if (chg !== null) ohlc.append(el('span', sgn(chg), (chg >= 0 ? '+' : '') + chg.toFixed(2) + '%'));
+    if (b.live) ohlc.append(el('span', 'gold', bursaOpen() ? 'live' : 'last trade'));
   };
 
   function render(t) {
@@ -968,6 +1066,7 @@ dash.onData(() => {
     if (rowsOf(tab).length) { TD.ticker = rowsOf(tab)[0].ticker; TD.kind = tab; }
     setTab(tab);
   }
+  if (ready) startLive();
   drawKpis(); drawTape(); drawLists(); drawTicket(false); drawChart(); drawLower();
 });
 </script>
