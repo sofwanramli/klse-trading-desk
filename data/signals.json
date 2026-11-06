@@ -1,1 +1,1 @@
-[]
+[{"ticker":"7579.KL","name":"AWC","company":"AWC Berhad","setup":"Screener BUY (breakout retest)","kind":"screener","date":"2026-11-05","entry":0.725,"buy_max":0.735,"stop":0.685,"stop_pct":5.5,"tp1":0.765,"tp1_pct":5.5,"tp2":0.8,"tp2_pct":10.3,"rr":1.9,"risk_per_lot":4.0,"rsi14":67.1,"adx14":40.2,"max_hold":10}]
